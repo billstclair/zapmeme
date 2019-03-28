@@ -77,6 +77,7 @@ import Svg.Attributes
         , x
         , x1
         , x2
+        , xlinkHref
         , y
         , y1
         , y2
@@ -84,8 +85,59 @@ import Svg.Attributes
 import Url exposing (Url)
 
 
+type TextPosition
+    = TopLeft
+    | TopMiddle
+    | TopRight
+    | CenterLeft
+    | CenterMiddle
+    | CenterRight
+    | BottomLeft
+    | BottomMiddle
+    | BottomRight
+    | ExplicitPosition Int Int
+
+
+type alias Caption =
+    { text : String
+    , position : TextPosition
+    , size : Int
+    , width : String
+    }
+
+
+{-| Packaged as a type, since it may change.
+-}
+type alias Image =
+    { url : String
+    }
+
+
+initialImage =
+    { url = "images/is-this-a-pigeon.jpg"
+    }
+
+
+type alias Meme =
+    { image : Image
+    , captions : List Caption
+    , height : Int
+    , width : Int
+    }
+
+
+emptyMeme : Meme
+emptyMeme =
+    { image = initialImage
+    , captions = []
+    , width = 1118
+    , height = 671
+    }
+
+
 type alias Model =
-    { key : Key
+    { meme : Meme
+    , key : Key
     , funnelState : PortFunnels.State
     , msg : Maybe String
     }
@@ -123,7 +175,8 @@ localStoragePrefix =
 
 init : Value -> Url -> Key -> ( Model, Cmd Msg )
 init flags url key =
-    { key = key
+    { meme = emptyMeme
+    , key = key
     , funnelState = PortFunnels.initialState localStoragePrefix
     , msg = Nothing
     }
@@ -186,10 +239,57 @@ storageHandler response state model =
     model |> withNoCmd
 
 
+br : Html msg
+br =
+    Html.br [] []
+
+
 view : Model -> Document Msg
 view model =
-    { title = "Meme Machine"
+    { title = "Elm Meme Maker"
     , body =
-        [ text "Hello, World!"
+        [ div [ align "center" ]
+            [ h2 [] [ text "Elm Meme Maker" ]
+            , p []
+                [ renderMeme model.meme ]
+            , p []
+                [ text <| chars.copyright ++ " 2019 Bill St. Clair"
+                , br
+                , a [ href "https://github.com/billstclair/elm-meme-maker" ]
+                    [ text "GitHub" ]
+                ]
+            ]
         ]
+    }
+
+
+renderMeme : Meme -> Html Msg
+renderMeme meme =
+    let
+        image =
+            meme.image
+
+        h =
+            String.fromInt meme.height
+
+        w =
+            String.fromInt meme.width
+
+        url =
+            meme.image.url
+    in
+    svg [ height h, width w ]
+        [ Svg.image [ xlinkHref url ]
+            []
+        ]
+
+
+codestr code =
+    String.fromList [ Char.fromCode code ]
+
+
+chars =
+    { leftCurlyQuote = codestr 0x201C
+    , copyright = codestr 0xA9
+    , nbsp = codestr 0xA0
     }
