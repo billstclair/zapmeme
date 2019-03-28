@@ -18,7 +18,7 @@ Then aim your browser at http://localhost:8000/src/Main.elm
 
 In order to size the text to the background image, we need to know the size of the uploaded background image. This relies on the `HtmlImageElement.naturalWidth` and `HtmlImageElement.naturalHeight` properties, as documented at https://developer.mozilla.org/en-US/docs/Web/API/HTMLImageElement. They are accessed in Elm via `billstclair/elm-image-properties` (to be done).
 
-I plan to use the ideas in Matti Paksula's [From SVG to Canvas and Back](http://svgopen.org/2010/papers/62-From_SVG_to_Canvas_and_Back/) to enable converting the meme to a PNG or JPEG file for download.
+I plan to use the ideas in Matti Paksula's [From SVG to Canvas and Back](http://svgopen.org/2010/papers/62-From_SVG_to_Canvas_and_Back/) to enable converting the meme to a PNG file for download.
 
 Samuli Kaipiainen's code based on Paksula's paper is live at http://sampumon.github.io/SVG.toDataURL/butterfly_test.html, and is stored locally in `site/butterfly-test.html` and `site/svg_todataurl.js` (and `site/base64.js` for IE). The NPM package that generates `svg_todataurl.js` is at https://www.npmjs.com/package/svgtodatauri.
 
