@@ -293,7 +293,12 @@ safeFontDict =
 
 safeFonts : List String
 safeFonts =
-    []
+    List.map .font safeFontList
+
+
+fontAttribute : Font -> Attribute msg
+fontAttribute font =
+    style "font-family" (String.concat [ font.font, ",", font.family ])
 
 
 view : Model -> Document Msg
@@ -310,9 +315,33 @@ view model =
                 , a [ href "https://github.com/billstclair/elm-meme-maker" ]
                     [ text "GitHub" ]
                 ]
+            , safeFontParagraph
             ]
         ]
     }
+
+
+safeFontParagraph : Html msg
+safeFontParagraph =
+    p [] <|
+        List.concat
+            [ [ span
+                    [ style "font-size" "110%"
+                    , style "font-weight" "bold"
+                    ]
+                    [ text "Safe Fonts" ]
+              , br
+              ]
+            , List.map fontExample safeFontList
+            ]
+
+
+fontExample : Font -> Html msg
+fontExample font =
+    span [ fontAttribute font ]
+        [ text font.font
+        , text " "
+        ]
 
 
 renderMeme : Meme -> Html Msg
@@ -330,8 +359,15 @@ renderMeme meme =
         url =
             meme.image.url
     in
-    svg [ height h, width w ]
-        [ Svg.image [ xlinkHref url ]
+    svg
+        [ width w
+        , height h
+        ]
+        [ Svg.image
+            [ width w
+            , height h
+            , xlinkHref url
+            ]
             []
         ]
 
