@@ -131,8 +131,8 @@ emptyMeme : Meme
 emptyMeme =
     { image = initialImage
     , captions = []
-    , width = 1118
-    , height = 671
+    , width = 839
+    , height = 503
     }
 
 
@@ -338,8 +338,9 @@ safeFontParagraph =
 
 fontExample : Font -> Html msg
 fontExample font =
-    span [ fontAttribute font ]
-        [ text font.font
+    span []
+        [ span [ fontAttribute font ]
+            [ text font.font ]
         , text " "
         ]
 
@@ -359,15 +360,9 @@ renderMeme meme =
         url =
             meme.image.url
     in
-    svg
-        [ width w
-        , height h
-        ]
+    svg [ width w, height h ]
         [ Svg.image
-            [ width w
-            , height h
-            , xlinkHref url
-            ]
+            [ width w, height h, xlinkHref url ]
             []
         ]
 
