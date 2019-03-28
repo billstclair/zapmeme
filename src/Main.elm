@@ -17,6 +17,7 @@ import Browser.Dom as Dom exposing (Viewport)
 import Browser.Events as Events
 import Browser.Navigation as Navigation exposing (Key)
 import Cmd.Extra exposing (withCmd, withCmds, withNoCmd)
+import Dict exposing (Dict)
 import Html
     exposing
         ( Attribute
@@ -242,6 +243,57 @@ storageHandler response state model =
 br : Html msg
 br =
     Html.br [] []
+
+
+{-| Started life as <http://web.mit.edu/jmorzins/www/@/css/fonts.css>
+-}
+safeFontPairs : List ( String, String )
+safeFontPairs =
+    [ ( "helvetica", "helvetica,sans-serif" )
+    , ( "arial", "arial,helvetica,sans-serif" )
+    , ( "verdana", "verdana,arial,helvetica,sans-serif" )
+    , ( "tahoma", "tahoma,arial,helvetica,sans-serif" )
+    , ( "arial-black", "\"Arial Black\",helvetica,sans-serif" )
+    , ( "comic-sans-ms", "\"Comic Sans MS\",arial,helvetica,sans-serif" )
+    , ( "trebuchet-ms", "\"Trebuchet MS\",arial,helvetica,sans-serif" )
+    , ( "impact", "impact,helvetica,sans-serif" )
+    , ( "courier", "courier,monospace" )
+    , ( "courier-new", "\"courier new\",courier,monospace" )
+    , ( "andale-mono", "\"andale mono\",\"monotype.com\",monaco,\"courier new\",courier,monospace" )
+    , ( "georgia", "georgia,times,serif" )
+    , ( "times", "\"Times Roman\",times,serif" )
+    , ( "times-new-roman", "\"Times New Roman\",\"Times Roman\",TimesNR,times,serif" )
+    , ( "palatino", "\"Palatino Linotype\",\"URW Palladio L\",\"palladio l\",palatino,\"book antiqua\",times,serif" )
+    , ( "century-schoolbook", "\"Century Schoolbook\",Century,\"new century schoolbook\",\"Century Schoolbook L\",times,serif" )
+    , ( "bookman", "\"Bookman Old Style\",\"URW Bookman L\",\"itc bookman\",times,serif" )
+    , ( "garamond", "Garamond,\"Garamond Antiqua\",times,serif" )
+    , ( "avant-garde", "\"Century Gothic\",\"Avant Garde Gothic\",\"Avant Garde\",\"URW Gothic L\",helvetica,sans-serif" )
+    ]
+
+
+type alias Font =
+    { font : String
+    , family : String
+    }
+
+
+safeFontList : List Font
+safeFontList =
+    safeFontPairs
+        |> List.sort
+        |> List.map (\( font, family ) -> Font font family)
+
+
+safeFontDict : Dict String Font
+safeFontDict =
+    safeFontList
+        |> List.map (\f -> ( f.font, f ))
+        |> Dict.fromList
+
+
+safeFonts : List String
+safeFonts =
+    []
 
 
 view : Model -> Document Msg

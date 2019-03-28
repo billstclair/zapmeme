@@ -26,5 +26,7 @@ Samuli Kaipiainen's code based on Paksula's paper is live at http://sampumon.git
 
 You can run the local copy by starting `elm reactor` as documented above, and aiming your browser at http://localhost:8000/site/butterfly-test.html.
 
+I plan to support all the fonts at https://fonts.google.com. You'll just have to name one of them, and it will be added to the `<head>` and CSS automatically. Out of the box, I'm supporting the safe fonts listed at http://web.mit.edu/jmorzins/www/fonts.html with CSS at http://web.mit.edu/jmorzins/www/@/css/fonts.css
+
 Copyright 2019, Bill St. Clair<br/>
 Distributed under the MIT License. See [LICENSE](LICENSE).
