@@ -450,7 +450,7 @@ init flags url key =
     { meme = emptyMeme
     , deletedCaption = Nothing
     , selectedPosition = Nothing
-    , showCaptionBorders = True
+    , showCaptionBorders = False
     , inputs = initialInputs
     , fontDict = safeFontDict
     , key = key
@@ -870,20 +870,37 @@ fontAttribute font =
 
 view : Model -> Document Msg
 view model =
-    { title = "Elm Meme Maker"
+    { title = "ZAP Meme"
     , body =
         [ div [ align "center" ]
-            [ h2 [] [ text "Elm Meme Maker" ]
+            [ h2 [] [ text "ZAP Meme" ]
             , p []
                 [ renderMeme model ]
             , p []
-                [ renderInputs model ]
+                [ button [ onClick AddCaption ]
+                    [ text "Add Caption" ]
+                , case model.selectedPosition of
+                    Nothing ->
+                        text ""
+
+                    _ ->
+                        button [ onClick DeleteCaption ]
+                            [ text "Delete Caption" ]
+                , case model.deletedCaption of
+                    Nothing ->
+                        text ""
+
+                    _ ->
+                        button [ onClick UndoDeletion ]
+                            [ text "Undo Deletion" ]
+                , renderInputs model
+                ]
             , fontParagraph
             , p []
                 [ text <| chars.copyright ++ " 2019 Bill St. Clair"
                 , br
                 , a
-                    [ href "https://github.com/billstclair/elm-meme-maker"
+                    [ href "https://github.com/billstclair/zapmeme"
                     , target "_blank"
                     ]
                     [ text "GitHub" ]
@@ -915,38 +932,6 @@ renderInputs model =
     in
     table []
         [ tr []
-            [ th "Caption Borders:"
-            , td []
-                [ input
-                    [ type_ "checkbox"
-                    , onCheck SetShowCaptionBorders
-                    , checked model.showCaptionBorders
-                    ]
-                    []
-                ]
-            ]
-        , tr []
-            [ td [] []
-            , td []
-                [ button [ onClick AddCaption ]
-                    [ text "Add Caption" ]
-                , case model.selectedPosition of
-                    Nothing ->
-                        text ""
-
-                    _ ->
-                        button [ onClick DeleteCaption ]
-                            [ text "Delete Caption" ]
-                , case model.deletedCaption of
-                    Nothing ->
-                        text ""
-
-                    _ ->
-                        button [ onClick UndoDeletion ]
-                            [ text "Undo Deletion" ]
-                ]
-            ]
-        , tr []
             [ td [ colspan 2 ]
                 [ textarea
                     [ disabled isDisabled
@@ -1045,6 +1030,17 @@ renderInputs model =
                     ]
                     []
                 , text "%"
+                ]
+            ]
+        , tr []
+            [ th "Caption Borders:"
+            , td []
+                [ input
+                    [ type_ "checkbox"
+                    , onCheck SetShowCaptionBorders
+                    , checked model.showCaptionBorders
+                    ]
+                    []
                 ]
             ]
         ]
@@ -1210,7 +1206,7 @@ fontOption currentFont font =
 
 fontParagraph : Html msg
 fontParagraph =
-    p [] <|
+    p [ style "width" "40em" ] <|
         List.concat
             [ [ span
                     [ style "font-size" "110%"

@@ -9,8 +9,8 @@ During development, this will be via two files, `index.html`, and `elm.js`. Once
 The code runs in `elm reactor`.
 
 ```
-git clone git@github.com:billstclair/elm-meme-maker.git
-cd elm-meme-maker
+git clone git@github.com:billstclair/zapmeme.git
+cd zapmeme
 elm reactor
 ```
 
