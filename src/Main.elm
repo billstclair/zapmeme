@@ -33,7 +33,10 @@ import Html
         , img
         , input
         , label
+        , optgroup
+        , option
         , p
+        , select
         , span
         , table
         , td
@@ -55,6 +58,7 @@ import Html.Attributes
         , name
         , placeholder
         , rows
+        , selected
         , size
         , src
         , style
@@ -106,23 +110,112 @@ type TextPosition
     | ExplicitPosition Int Int
 
 
+textPositionToString : TextPosition -> String
+textPositionToString position =
+    case position of
+        TopLeft ->
+            "Top Left"
+
+        TopCenter ->
+            "Top Center"
+
+        TopRight ->
+            "Top Right"
+
+        MiddleLeft ->
+            "Middle Left"
+
+        MiddleCenter ->
+            "Middle Center"
+
+        MiddleRight ->
+            "Middle Right"
+
+        BottomLeft ->
+            "Bottom Left"
+
+        BottomCenter ->
+            "Bottom Center"
+
+        BottomRight ->
+            "Bottom Right"
+
+        ExplicitPosition x y ->
+            ""
+
+
+stringToTextPosition : String -> TextPosition
+stringToTextPosition string =
+    case string of
+        "Top Left" ->
+            TopLeft
+
+        "Top Center" ->
+            TopCenter
+
+        "Top Right" ->
+            TopRight
+
+        "Middle Left" ->
+            MiddleLeft
+
+        "Middle Center" ->
+            MiddleCenter
+
+        "Middle Right" ->
+            MiddleRight
+
+        "Bottom Left" ->
+            BottomLeft
+
+        "Bottom Center" ->
+            BottomCenter
+
+        "Bottom Right" ->
+            BottomRight
+
+        _ ->
+            TopCenter
+
+
 type TextAlignment
     = Left
     | Right
     | Center
 
 
-textAlignmentString : TextAlignment -> String
-textAlignmentString alignment =
+allAlignments : List TextAlignment
+allAlignments =
+    [ Left, Center, Right ]
+
+
+alignmentToString : TextAlignment -> String
+alignmentToString alignment =
     case alignment of
         Left ->
-            "left"
+            "Left"
 
         Right ->
-            "right"
+            "Right"
 
         Center ->
-            "center"
+            "Center"
+
+
+stringToAlignment : String -> TextAlignment
+stringToAlignment string =
+    case string of
+        "Left" ->
+            Left
+
+        "Right" ->
+            Right
+
+        "Center" ->
+            Center
+
+        _ ->
+            Center
 
 
 {-| fontsize, widdth, and height are percentages of the image size
@@ -268,6 +361,7 @@ emptyMeme =
 type alias Model =
     { meme : Meme
     , selectedPosition : Maybe TextPosition
+    , deletedCaption : Maybe Caption
     , showCaptionBorders : Bool
     , inputs : Inputs
     , fontDict : Dict String Font
@@ -301,16 +395,22 @@ initialInputs =
     , fontcolor = "white"
     , bold = True
     , width = "75"
-    , height = "30"
+    , height = "15"
     }
 
 
 type Msg
     = Noop
     | SelectCaption (Maybe TextPosition)
+    | AddCaption
+    | DeleteCaption
+    | UndoDeletion
+    | SetShowCaptionBorders Bool
     | SetText String
     | SetPosition TextPosition
+    | SetPositionString String
     | SetAlignment TextAlignment
+    | SetAlignmentString String
     | SetFont String
     | SetFontSize String
     | SetFontColor String
@@ -348,6 +448,7 @@ localStoragePrefix =
 init : Value -> Url -> Key -> ( Model, Cmd Msg )
 init flags url key =
     { meme = emptyMeme
+    , deletedCaption = Nothing
     , selectedPosition = Nothing
     , showCaptionBorders = True
     , inputs = initialInputs
@@ -357,6 +458,11 @@ init flags url key =
     , msg = Nothing
     }
         |> withNoCmd
+
+
+findCaption : Maybe TextPosition -> List Caption -> Maybe Caption
+findCaption currentPosition captions =
+    LE.find (\c -> currentPosition == Just c.position) captions
 
 
 selectCaption : Maybe TextPosition -> Model -> ( Model, Cmd Msg )
@@ -374,7 +480,7 @@ selectCaption position model =
                 model.inputs
 
             else
-                case LE.find (\c -> Just c.position == pos) model.meme.captions of
+                case findCaption pos model.meme.captions of
                     Nothing ->
                         model.inputs
 
@@ -393,8 +499,115 @@ selectCaption position model =
     { model
         | selectedPosition = pos
         , inputs = inputs
+        , deletedCaption = Nothing
     }
         |> withCmd (Task.attempt (\_ -> Noop) (Dom.focus "text"))
+
+
+setPosition : TextPosition -> Model -> ( Model, Cmd Msg )
+setPosition position model =
+    let
+        inputs =
+            model.inputs
+
+        selectedPosition =
+            model.selectedPosition
+
+        mdl =
+            model |> updateCaption (\c -> { c | position = position })
+    in
+    { mdl
+        | inputs =
+            { inputs
+                | position = position
+            }
+        , selectedPosition = Just position
+    }
+        |> withNoCmd
+
+
+addCaption : Model -> ( Model, Cmd Msg )
+addCaption model =
+    let
+        meme =
+            model.meme
+
+        captions =
+            meme.captions
+
+        positions =
+            List.filter
+                (\p -> Nothing == LE.find (\c -> p == c.position) captions)
+                allPositions
+    in
+    case positions of
+        [] ->
+            model |> withNoCmd
+
+        position :: _ ->
+            let
+                caption =
+                    { text = "Nothing to see here"
+                    , position = position
+                    , alignment = Center
+                    , font = "avant-garde"
+                    , fontsize = 10
+                    , fontcolor = "white"
+                    , bold = True
+                    , width = 75
+                    , height = 15
+                    }
+            in
+            { model
+                | meme =
+                    { meme
+                        | captions = caption :: captions
+                    }
+                , deletedCaption = Nothing
+            }
+                |> selectCaption (Just position)
+
+
+deleteCaption : Model -> ( Model, Cmd Msg )
+deleteCaption model =
+    let
+        meme =
+            model.meme
+
+        selectedPosition =
+            model.selectedPosition
+    in
+    { model
+        | meme =
+            { meme
+                | captions =
+                    List.filter (\c -> selectedPosition /= Just c.position)
+                        meme.captions
+            }
+        , selectedPosition = Nothing
+        , deletedCaption = findCaption selectedPosition meme.captions
+    }
+        |> withNoCmd
+
+
+undoDeletion : Model -> ( Model, Cmd Msg )
+undoDeletion model =
+    case model.deletedCaption of
+        Nothing ->
+            model |> withNoCmd
+
+        Just caption ->
+            let
+                meme =
+                    model.meme
+            in
+            { model
+                | meme =
+                    { meme | captions = caption :: meme.captions }
+                , selectedPosition = Just caption.position
+                , deletedCaption = Nothing
+            }
+                |> withNoCmd
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -407,8 +620,21 @@ update msg model =
         Noop ->
             model |> withNoCmd
 
+        AddCaption ->
+            addCaption model
+
+        DeleteCaption ->
+            deleteCaption model
+
+        UndoDeletion ->
+            undoDeletion model
+
         SelectCaption position ->
             selectCaption position model
+
+        SetShowCaptionBorders show ->
+            { model | showCaptionBorders = show }
+                |> withNoCmd
 
         SetText string ->
             { model
@@ -419,18 +645,25 @@ update msg model =
                 |> withNoCmd
 
         SetPosition position ->
-            { model
-                | inputs =
-                    { inputs | position = position }
-            }
-                |> withNoCmd
+            setPosition position model
+
+        SetPositionString string ->
+            let
+                position =
+                    stringToTextPosition string
+            in
+            setPosition position model
 
         SetAlignment alignment ->
             { model
                 | inputs =
                     { inputs | alignment = alignment }
             }
+                |> updateCaption (\c -> { c | alignment = alignment })
                 |> withNoCmd
+
+        SetAlignmentString string ->
+            update (SetAlignment <| stringToAlignment string) model
 
         SetFont string ->
             { model
@@ -449,12 +682,17 @@ update msg model =
                 |> withNoCmd
 
         SetFontColor string ->
-            { model
-                | inputs =
-                    { inputs | fontcolor = string }
-            }
-                |> updateCaption (\c -> { c | fontcolor = string })
-                |> withNoCmd
+            case string of
+                "" ->
+                    model |> withNoCmd
+
+                _ ->
+                    { model
+                        | inputs =
+                            { inputs | fontcolor = string }
+                    }
+                        |> updateCaption (\c -> { c | fontcolor = string })
+                        |> withNoCmd
 
         SetBold bold ->
             { model
@@ -525,7 +763,7 @@ updateCaption updater model =
         selectedPosition =
             model.selectedPosition
     in
-    case LE.find (\c -> selectedPosition == Just c.position) captions of
+    case findCaption selectedPosition captions of
         Nothing ->
             model
 
@@ -671,12 +909,48 @@ renderInputs model =
     let
         inputs =
             model.inputs
+
+        isDisabled =
+            model.selectedPosition == Nothing
     in
     table []
         [ tr []
+            [ th "Caption Borders:"
+            , td []
+                [ input
+                    [ type_ "checkbox"
+                    , onCheck SetShowCaptionBorders
+                    , checked model.showCaptionBorders
+                    ]
+                    []
+                ]
+            ]
+        , tr []
+            [ td [] []
+            , td []
+                [ button [ onClick AddCaption ]
+                    [ text "Add Caption" ]
+                , case model.selectedPosition of
+                    Nothing ->
+                        text ""
+
+                    _ ->
+                        button [ onClick DeleteCaption ]
+                            [ text "Delete Caption" ]
+                , case model.deletedCaption of
+                    Nothing ->
+                        text ""
+
+                    _ ->
+                        button [ onClick UndoDeletion ]
+                            [ text "Undo Deletion" ]
+                ]
+            ]
+        , tr []
             [ td [ colspan 2 ]
                 [ textarea
-                    [ rows 4
+                    [ disabled isDisabled
+                    , rows 4
                     , cols 50
                     , style "font-size" "20px"
                     , onInput SetText
@@ -687,22 +961,26 @@ renderInputs model =
                 ]
             ]
         , tr []
+            [ th "Position:"
+            , td []
+                [ positionSelector isDisabled model ]
+            ]
+        , tr []
+            [ th "Text Alignment:"
+            , td []
+                [ alignmentSelector isDisabled model ]
+            ]
+        , tr []
             [ th "Font:"
             , td []
-                [ input
-                    [ type_ "text"
-                    , size 30
-                    , onInput SetFont
-                    , value inputs.font
-                    ]
-                    []
-                ]
+                [ fontSelector isDisabled model ]
             ]
         , tr []
             [ th "Font Height:"
             , td []
                 [ input
                     [ type_ "text"
+                    , disabled isDisabled
                     , textalign "right"
                     , size 3
                     , onInput SetFontSize
@@ -715,8 +993,11 @@ renderInputs model =
         , tr []
             [ th "Font Color:"
             , td []
-                [ input
+                [ colorSelector isDisabled inputs.fontcolor
+                , text " "
+                , input
                     [ type_ "text"
+                    , disabled isDisabled
                     , size 20
                     , onInput SetFontColor
                     , value inputs.fontcolor
@@ -729,6 +1010,7 @@ renderInputs model =
             , td []
                 [ input
                     [ type_ "checkbox"
+                    , disabled isDisabled
                     , onCheck SetBold
                     , checked inputs.bold
                     ]
@@ -740,6 +1022,7 @@ renderInputs model =
             , td []
                 [ input
                     [ type_ "text"
+                    , disabled isDisabled
                     , textalign "right"
                     , size 3
                     , onInput SetWidth
@@ -754,6 +1037,7 @@ renderInputs model =
             , td []
                 [ input
                     [ type_ "text"
+                    , disabled isDisabled
                     , textalign "right"
                     , size 3
                     , onInput SetHeight
@@ -763,6 +1047,164 @@ renderInputs model =
                 , text "%"
                 ]
             ]
+        ]
+
+
+allPositions : List TextPosition
+allPositions =
+    [ TopCenter
+    , MiddleCenter
+    , BottomCenter
+    , TopLeft
+    , TopRight
+    , MiddleLeft
+    , MiddleRight
+    , BottomLeft
+    , BottomRight
+    ]
+
+
+positionSelector : Bool -> Model -> Html Msg
+positionSelector isDisabled model =
+    let
+        position =
+            model.selectedPosition
+
+        captions =
+            model.meme.captions
+
+        positions =
+            List.filter
+                (\p ->
+                    (position == Just p)
+                        || (Nothing == LE.find (\c -> p == c.position) captions)
+                )
+                allPositions
+    in
+    select
+        [ disabled isDisabled
+        , onInput SetPositionString
+        ]
+    <|
+        List.map (positionOption position) positions
+
+
+positionOption : Maybe TextPosition -> TextPosition -> Html Msg
+positionOption currentPosition position =
+    let
+        positionString =
+            textPositionToString position
+    in
+    option
+        [ selected <| currentPosition == Just position
+        , value positionString
+        ]
+        [ text <| textPositionToString position ]
+
+
+alignmentSelector : Bool -> Model -> Html Msg
+alignmentSelector isDisabled model =
+    let
+        currentAlignment =
+            case findCaption model.selectedPosition model.meme.captions of
+                Nothing ->
+                    Center
+
+                Just caption ->
+                    caption.alignment
+    in
+    select
+        [ disabled isDisabled
+        , onInput SetAlignmentString
+        ]
+    <|
+        List.map (alignmentOption currentAlignment) allAlignments
+
+
+alignmentOption : TextAlignment -> TextAlignment -> Html Msg
+alignmentOption currentAlignment alignment =
+    let
+        alignmentString =
+            alignmentToString alignment
+    in
+    option
+        [ selected <| currentAlignment == alignment
+        , value alignmentString
+        ]
+        [ text alignmentString ]
+
+
+colors : List String
+colors =
+    [ "black"
+    , "white"
+    , "red"
+    , "green"
+    , "blue"
+    , "purple"
+    , "orange"
+    , "yellow"
+    , "turquoise"
+    ]
+
+
+colorSelector : Bool -> String -> Html Msg
+colorSelector isDisabled color =
+    select
+        [ disabled isDisabled
+        , onInput SetFontColor
+        ]
+    <|
+        customColorOption color
+            :: List.map
+                (colorOption color)
+                colors
+
+
+customColorOption : String -> Html Msg
+customColorOption currentColor =
+    let
+        isCustom =
+            not <| List.member currentColor colors
+    in
+    option
+        [ selected isCustom
+        , value ""
+        ]
+        [ text "Custom" ]
+
+
+colorOption : String -> String -> Html Msg
+colorOption currentColor color =
+    option
+        [ selected <| currentColor == color
+        , value color
+        ]
+        [ text color ]
+
+
+fontSelector : Bool -> Model -> Html Msg
+fontSelector isDisabled model =
+    select
+        [ disabled isDisabled
+        , onInput SetFont
+        ]
+    <|
+        List.map (fontOption model.inputs.font)
+            (Dict.toList model.fontDict
+                |> List.map Tuple.second
+            )
+
+
+fontOption : String -> Font -> Html Msg
+fontOption currentFont font =
+    option
+        [ selected <| currentFont == font.font
+        , value font.font
+        ]
+        -- font attributes don't work here in most browsers
+        [ span [ fontAttribute font ]
+            [ text font.font ]
         ]
 
 
@@ -843,7 +1285,8 @@ renderCaption model caption =
             model.showCaptionBorders || isSelected
 
         alignment =
-            textAlignmentString caption.alignment
+            alignmentToString caption.alignment
+                |> String.toLower
 
         font =
             Maybe.withDefault defaultFont <| Dict.get caption.font model.fontDict
