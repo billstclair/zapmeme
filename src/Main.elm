@@ -887,7 +887,8 @@ view model =
                     ]
                     [ text "GitHub" ]
                 ]
-            , safeFontParagraph
+
+            --, safeFontParagraph
             ]
         ]
     }
