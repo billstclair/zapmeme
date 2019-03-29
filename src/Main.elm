@@ -66,7 +66,7 @@ import Json.Decode as JD exposing (Decoder, Value)
 import Json.Encode as JE
 import PortFunnel.LocalStorage as LocalStorage
 import PortFunnels exposing (FunnelDict, Handler(..))
-import Svg exposing (Svg, g, line, rect, svg)
+import Svg exposing (Svg, foreignObject, g, line, rect, svg)
 import Svg.Attributes
     exposing
         ( fill
@@ -88,23 +88,112 @@ import Url exposing (Url)
 
 type TextPosition
     = TopLeft
-    | TopMiddle
+    | TopCenter
     | TopRight
-    | CenterLeft
-    | CenterMiddle
-    | CenterRight
+    | MiddleLeft
+    | MiddleCenter
+    | MiddleRight
     | BottomLeft
-    | BottomMiddle
+    | BottomCenter
     | BottomRight
     | ExplicitPosition Int Int
+
+
+type TextAlignment
+    = Left
+    | Right
+    | Center
+
+
+textAlignmentString : TextAlignment -> String
+textAlignmentString alignment =
+    case alignment of
+        Left ->
+            "left"
+
+        Right ->
+            "right"
+
+        Center ->
+            "center"
 
 
 type alias Caption =
     { text : String
     , position : TextPosition
-    , size : Int
-    , width : String
+    , alignment : TextAlignment
+    , font : String
+    , fontsize : Int
+    , fontcolor : String
+    , bold : Bool
+    , width : Int
+    , height : Int
     }
+
+
+captionXY : Caption -> Int -> Int -> ( Int, Int )
+captionXY caption totalWidth totalHeight =
+    let
+        w =
+            caption.width
+
+        wo2 =
+            w // 2
+
+        h =
+            caption.height
+
+        ho2 =
+            h // 2
+
+        totalCenter =
+            totalWidth // 2
+
+        totalMiddle =
+            totalHeight // 2
+
+        centerx =
+            totalCenter - wo2
+
+        rightx =
+            totalWidth - w
+
+        middley =
+            totalMiddle - ho2
+
+        bottomy =
+            totalHeight - h
+    in
+    case caption.position of
+        TopLeft ->
+            ( 0, 0 )
+
+        TopCenter ->
+            ( centerx, 0 )
+
+        TopRight ->
+            ( rightx, 0 )
+
+        MiddleLeft ->
+            ( 0, middley )
+
+        MiddleCenter ->
+            ( centerx, middley )
+
+        MiddleRight ->
+            ( rightx, middley )
+
+        BottomLeft ->
+            ( 0, bottomy )
+
+        BottomCenter ->
+            ( centerx, bottomy )
+
+        BottomRight ->
+            ( rightx, bottomy )
+
+        ExplicitPosition x y ->
+            ( x, y )
 
 
 {-| Packaged as a type, since it may change.
@@ -127,10 +216,25 @@ type alias Meme =
     }
 
 
+sampleCaptions : List Caption
+sampleCaptions =
+    [ { text = "Is this a pigeon?"
+      , position = BottomCenter
+      , alignment = Center
+      , font = "avant-garde"
+      , fontsize = 50
+      , fontcolor = "white"
+      , bold = True
+      , width = 500
+      , height = 100
+      }
+    ]
+
+
 emptyMeme : Meme
 emptyMeme =
     { image = initialImage
-    , captions = []
+    , captions = sampleCaptions
     , width = 839
     , height = 503
     }
@@ -245,6 +349,11 @@ br =
     Html.br [] []
 
 
+defaultFont : Font
+defaultFont =
+    Font "arial-black" "\"Arial Black\",helvetica,sans-serif"
+
+
 {-| Started life as <http://web.mit.edu/jmorzins/www/@/css/fonts.css>
 -}
 safeFontPairs : List ( String, String )
@@ -298,7 +407,7 @@ safeFonts =
 
 fontAttribute : Font -> Attribute msg
 fontAttribute font =
-    style "font-family" (String.concat [ font.font, ",", font.family ])
+    style "font-family" font.family
 
 
 view : Model -> Document Msg
@@ -360,10 +469,54 @@ renderMeme meme =
         url =
             meme.image.url
     in
-    svg [ width w, height h ]
-        [ Svg.image
-            [ width w, height h, xlinkHref url ]
-            []
+    svg [ width w, height h ] <|
+        List.concat
+            [ [ Svg.image
+                    [ width w, height h, xlinkHref url ]
+                    []
+              ]
+            , List.map (renderCaption meme) meme.captions
+            ]
+
+
+tos : Int -> String
+tos int =
+    String.fromInt int
+
+
+renderCaption : Meme -> Caption -> Svg msg
+renderCaption meme caption =
+    let
+        ( cx, cy ) =
+            captionXY caption meme.width meme.height
+
+        alignment =
+            textAlignmentString caption.alignment
+
+        font =
+            Maybe.withDefault defaultFont <| Dict.get caption.font safeFontDict
+
+        weight =
+            if caption.bold then
+                "bold"
+
+            else
+                "normal"
+    in
+    foreignObject
+        [ x (tos cx)
+        , y (tos cy)
+        , width (tos caption.width)
+        , height (tos caption.height)
+        ]
+        [ div
+            [ style "text-align" alignment
+            , fontAttribute font
+            , style "font-size" <| tos caption.fontsize ++ "px"
+            , style "color" caption.fontcolor
+            , style "font-weight" weight
+            ]
+            [ text caption.text ]
         ]
 
 
