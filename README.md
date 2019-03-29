@@ -1,4 +1,4 @@
-# Elm Meme Maker
+# ZAP Meme
 
 This is the meme maker I've always wanted. There are a lot of them out there, but this one works entirely from a single HTML file, which you can download and keep your own copy of, if you like. It has no dependency on a server for anything but that. Everything is stored in your browser's local storage database.
 
