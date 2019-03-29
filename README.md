@@ -4,9 +4,11 @@ This is the meme maker I've always wanted. There are a lot of them out there, bu
 
 The project is live at https://zapmeme.com
 
-During development, this will be via two files, `index.html`, and `elm.js`. Once it works, I'll package `elm.js` inside of `index.html` for shipping.
+There's a list of bugs and features in [TODO.md](TODO.md).
 
-The code runs in `elm reactor`.
+During development, the code lives in `index.html` and some JS files, plus `elm.js`, for the compiled Elm code. Once it works, I'll append all the JS and images inside of `index.html` for shipping.
+
+The code runs in `elm reactor`, though not everything will work there.
 
 ```
 git clone git@github.com:billstclair/zapmeme.git

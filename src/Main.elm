@@ -526,6 +526,11 @@ setPosition position model =
         |> withNoCmd
 
 
+toi : Int -> String -> Int
+toi default string =
+    Maybe.withDefault default <| String.toInt string
+
+
 addCaption : Model -> ( Model, Cmd Msg )
 addCaption model =
     let
@@ -546,16 +551,19 @@ addCaption model =
 
         position :: _ ->
             let
+                inputs =
+                    model.inputs
+
                 caption =
-                    { text = "Nothing to see here"
+                    { text = inputs.text
                     , position = position
-                    , alignment = Center
-                    , font = "avant-garde"
-                    , fontsize = 10
+                    , alignment = inputs.alignment
+                    , font = inputs.font
+                    , fontsize = toi 10 inputs.fontsize
                     , fontcolor = "white"
                     , bold = True
-                    , width = 75
-                    , height = 15
+                    , width = toi 75 inputs.width
+                    , height = toi 15 inputs.height
                     }
             in
             { model
@@ -934,8 +942,7 @@ renderInputs model =
         [ tr []
             [ td [ colspan 2 ]
                 [ textarea
-                    [ disabled isDisabled
-                    , rows 4
+                    [ rows 4
                     , cols 50
                     , style "font-size" "20px"
                     , onInput SetText
