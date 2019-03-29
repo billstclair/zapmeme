@@ -878,6 +878,7 @@ view model =
                 [ renderMeme model ]
             , p []
                 [ renderInputs model ]
+            , fontParagraph
             , p []
                 [ text <| chars.copyright ++ " 2019 Bill St. Clair"
                 , br
@@ -887,8 +888,6 @@ view model =
                     ]
                     [ text "GitHub" ]
                 ]
-
-            --, safeFontParagraph
             ]
         ]
     }
@@ -1209,15 +1208,15 @@ fontOption currentFont font =
         ]
 
 
-safeFontParagraph : Html msg
-safeFontParagraph =
+fontParagraph : Html msg
+fontParagraph =
     p [] <|
         List.concat
             [ [ span
                     [ style "font-size" "110%"
                     , style "font-weight" "bold"
                     ]
-                    [ text "Safe Fonts" ]
+                    [ text "Fonts" ]
               , br
               ]
             , List.map fontExample safeFontList
