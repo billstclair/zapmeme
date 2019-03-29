@@ -38,7 +38,7 @@ import Html
         , table
         , td
         , text
-        , th
+        , textarea
         , tr
         )
 import Html.Attributes
@@ -46,12 +46,15 @@ import Html.Attributes
         ( align
         , alt
         , checked
+        , cols
         , colspan
         , disabled
         , height
         , href
+        , id
         , name
         , placeholder
+        , rows
         , size
         , src
         , style
@@ -61,9 +64,10 @@ import Html.Attributes
         , value
         , width
         )
-import Html.Events exposing (on, onClick, onInput)
+import Html.Events exposing (on, onCheck, onClick, onInput)
 import Json.Decode as JD exposing (Decoder, Value)
 import Json.Encode as JE
+import List.Extra as LE
 import PortFunnel.LocalStorage as LocalStorage
 import PortFunnels exposing (FunnelDict, Handler(..))
 import Svg exposing (Svg, foreignObject, g, line, rect, svg)
@@ -85,6 +89,7 @@ import Svg.Attributes
         , y2
         )
 import Svg.Events
+import Task
 import Url exposing (Url)
 
 
@@ -228,7 +233,7 @@ type alias Meme =
 
 sampleCaptions : List Caption
 sampleCaptions =
-    [ { text = "I ask you:"
+    [ { text = "I ask you<br>once again:"
       , position = TopCenter
       , alignment = Center
       , font = "avant-garde"
@@ -236,7 +241,7 @@ sampleCaptions =
       , fontcolor = "white"
       , bold = True
       , width = 75
-      , height = 15
+      , height = 30
       }
     , { text = "Is this a pigeon?"
       , position = BottomCenter
@@ -264,6 +269,7 @@ type alias Model =
     { meme : Meme
     , selectedPosition : Maybe TextPosition
     , showCaptionBorders : Bool
+    , inputs : Inputs
     , fontDict : Dict String Font
     , key : Key
     , funnelState : PortFunnels.State
@@ -271,9 +277,46 @@ type alias Model =
     }
 
 
+type alias Inputs =
+    { -- For the selected caption
+      text : String
+    , position : TextPosition
+    , alignment : TextAlignment
+    , font : String
+    , fontsize : String
+    , fontcolor : String
+    , bold : Bool
+    , width : String
+    , height : String
+    }
+
+
+initialInputs : Inputs
+initialInputs =
+    { text = ""
+    , position = TopCenter
+    , alignment = Center
+    , font = "avante-garde"
+    , fontsize = "10"
+    , fontcolor = "white"
+    , bold = True
+    , width = "75"
+    , height = "30"
+    }
+
+
 type Msg
     = Noop
     | SelectCaption (Maybe TextPosition)
+    | SetText String
+    | SetPosition TextPosition
+    | SetAlignment TextAlignment
+    | SetFont String
+    | SetFontSize String
+    | SetFontColor String
+    | SetBold Bool
+    | SetWidth String
+    | SetHeight String
     | HandleUrlRequest UrlRequest
     | HandleUrlChange Url
     | ProcessLocalStorage Value
@@ -305,8 +348,9 @@ localStoragePrefix =
 init : Value -> Url -> Key -> ( Model, Cmd Msg )
 init flags url key =
     { meme = emptyMeme
-    , selectedPosition = Just TopCenter
+    , selectedPosition = Nothing
     , showCaptionBorders = True
+    , inputs = initialInputs
     , fontDict = safeFontDict
     , key = key
     , funnelState = PortFunnels.initialState localStoragePrefix
@@ -315,21 +359,125 @@ init flags url key =
         |> withNoCmd
 
 
+selectCaption : Maybe TextPosition -> Model -> ( Model, Cmd Msg )
+selectCaption position model =
+    let
+        pos =
+            if position == model.selectedPosition then
+                Nothing
+
+            else
+                position
+
+        inputs =
+            if pos == Nothing then
+                model.inputs
+
+            else
+                case LE.find (\c -> Just c.position == pos) model.meme.captions of
+                    Nothing ->
+                        model.inputs
+
+                    Just caption ->
+                        { text = caption.text
+                        , position = caption.position
+                        , alignment = caption.alignment
+                        , font = caption.font
+                        , fontsize = tos caption.fontsize
+                        , fontcolor = caption.fontcolor
+                        , bold = caption.bold
+                        , width = tos caption.width
+                        , height = tos caption.height
+                        }
+    in
+    { model
+        | selectedPosition = pos
+        , inputs = inputs
+    }
+        |> withCmd (Task.attempt (\_ -> Noop) (Dom.focus "text"))
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
+    let
+        inputs =
+            model.inputs
+    in
     case msg of
         Noop ->
             model |> withNoCmd
 
         SelectCaption position ->
-            { model
-                | selectedPosition =
-                    if position == model.selectedPosition then
-                        Nothing
+            selectCaption position model
 
-                    else
-                        position
+        SetText string ->
+            { model
+                | inputs =
+                    { inputs | text = string }
             }
+                |> updateCaption (\c -> { c | text = string })
+                |> withNoCmd
+
+        SetPosition position ->
+            { model
+                | inputs =
+                    { inputs | position = position }
+            }
+                |> withNoCmd
+
+        SetAlignment alignment ->
+            { model
+                | inputs =
+                    { inputs | alignment = alignment }
+            }
+                |> withNoCmd
+
+        SetFont string ->
+            { model
+                | inputs =
+                    { inputs | font = string }
+            }
+                |> updateCaption (\c -> { c | font = string })
+                |> withNoCmd
+
+        SetFontSize string ->
+            { model
+                | inputs =
+                    { inputs | fontsize = string }
+            }
+                |> updateCaption (\c -> { c | fontsize = parseInt 10 string })
+                |> withNoCmd
+
+        SetFontColor string ->
+            { model
+                | inputs =
+                    { inputs | fontcolor = string }
+            }
+                |> updateCaption (\c -> { c | fontcolor = string })
+                |> withNoCmd
+
+        SetBold bold ->
+            { model
+                | inputs =
+                    { inputs | bold = bold }
+            }
+                |> updateCaption (\c -> { c | bold = bold })
+                |> withNoCmd
+
+        SetWidth string ->
+            { model
+                | inputs =
+                    { inputs | width = string }
+            }
+                |> updateCaption (\c -> { c | width = parseInt 75 string })
+                |> withNoCmd
+
+        SetHeight string ->
+            { model
+                | inputs =
+                    { inputs | height = string }
+            }
+                |> updateCaption (\c -> { c | height = parseInt 75 string })
                 |> withNoCmd
 
         HandleUrlRequest request ->
@@ -358,6 +506,40 @@ update msg model =
 
                 Ok res ->
                     res
+
+
+parseInt : Int -> String -> Int
+parseInt default string =
+    Maybe.withDefault default <| String.toInt string
+
+
+updateCaption : (Caption -> Caption) -> Model -> Model
+updateCaption updater model =
+    let
+        meme =
+            model.meme
+
+        captions =
+            meme.captions
+
+        selectedPosition =
+            model.selectedPosition
+    in
+    case LE.find (\c -> selectedPosition == Just c.position) captions of
+        Nothing ->
+            model
+
+        Just caption ->
+            { model
+                | meme =
+                    { meme
+                        | captions =
+                            updater caption
+                                :: List.filter
+                                    (\c -> selectedPosition /= Just c.position)
+                                    captions
+                    }
+            }
 
 
 funnelDict : FunnelDict Model Msg
@@ -457,15 +639,131 @@ view model =
             , p []
                 [ renderMeme model ]
             , p []
+                [ renderInputs model ]
+            , p []
                 [ text <| chars.copyright ++ " 2019 Bill St. Clair"
                 , br
-                , a [ href "https://github.com/billstclair/elm-meme-maker" ]
+                , a
+                    [ href "https://github.com/billstclair/elm-meme-maker"
+                    , target "_blank"
+                    ]
                     [ text "GitHub" ]
                 ]
             , safeFontParagraph
             ]
         ]
     }
+
+
+th : String -> Html msg
+th string =
+    Html.th [ textalign "right" ]
+        [ text string ]
+
+
+textalign : String -> Attribute msg
+textalign string =
+    style "text-align" string
+
+
+renderInputs : Model -> Html Msg
+renderInputs model =
+    let
+        inputs =
+            model.inputs
+    in
+    table []
+        [ tr []
+            [ td [ colspan 2 ]
+                [ textarea
+                    [ rows 4
+                    , cols 50
+                    , style "font-size" "20px"
+                    , onInput SetText
+                    , id "text"
+                    , value inputs.text
+                    ]
+                    []
+                ]
+            ]
+        , tr []
+            [ th "Font:"
+            , td []
+                [ input
+                    [ type_ "text"
+                    , size 30
+                    , onInput SetFont
+                    , value inputs.font
+                    ]
+                    []
+                ]
+            ]
+        , tr []
+            [ th "Font Height:"
+            , td []
+                [ input
+                    [ type_ "text"
+                    , textalign "right"
+                    , size 3
+                    , onInput SetFontSize
+                    , value inputs.fontsize
+                    ]
+                    []
+                , text "%"
+                ]
+            ]
+        , tr []
+            [ th "Font Color:"
+            , td []
+                [ input
+                    [ type_ "text"
+                    , size 20
+                    , onInput SetFontColor
+                    , value inputs.fontcolor
+                    ]
+                    []
+                ]
+            ]
+        , tr []
+            [ th "Bold:"
+            , td []
+                [ input
+                    [ type_ "checkbox"
+                    , onCheck SetBold
+                    , checked inputs.bold
+                    ]
+                    []
+                ]
+            ]
+        , tr []
+            [ th "Width:"
+            , td []
+                [ input
+                    [ type_ "text"
+                    , textalign "right"
+                    , size 3
+                    , onInput SetWidth
+                    , value inputs.width
+                    ]
+                    []
+                , text "%"
+                ]
+            ]
+        , tr []
+            [ th "Height:"
+            , td []
+                [ input
+                    [ type_ "text"
+                    , textalign "right"
+                    , size 3
+                    , onInput SetHeight
+                    , value inputs.height
+                    ]
+                    []
+                , text "%"
+                ]
+            ]
+        ]
 
 
 safeFontParagraph : Html msg
@@ -592,13 +890,14 @@ renderCaption model caption =
             , height (tos ch)
             ]
             [ div
-                [ style "text-align" alignment
+                [ textalign alignment
                 , fontAttribute font
                 , style "font-size" <| tos fontsize ++ "px"
                 , style "color" caption.fontcolor
                 , style "font-weight" weight
                 ]
-                [ text caption.text ]
+              <|
+                splitLines caption.text
             ]
         , rect
             [ x (tos cx)
@@ -611,6 +910,13 @@ renderCaption model caption =
             ]
             []
         ]
+
+
+splitLines : String -> List (Html msg)
+splitLines string =
+    String.split "<br>" string
+        |> List.map text
+        |> List.intersperse br
 
 
 codestr code =
