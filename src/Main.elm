@@ -73,6 +73,7 @@ import Svg.Attributes
         , fontSize
         , height
         , stroke
+        , strokeDasharray
         , transform
         , width
         , x
@@ -83,6 +84,7 @@ import Svg.Attributes
         , y1
         , y2
         )
+import Svg.Events
 import Url exposing (Url)
 
 
@@ -118,6 +120,8 @@ textAlignmentString alignment =
             "center"
 
 
+{-| fontsize, widdth, and height are percentages of the image size
+-}
 type alias Caption =
     { text : String
     , position : TextPosition
@@ -131,17 +135,17 @@ type alias Caption =
     }
 
 
-captionXY : Caption -> Int -> Int -> ( Int, Int )
-captionXY caption totalWidth totalHeight =
+captionCoordinates : Caption -> Int -> Int -> ( ( Int, Int ), ( Int, Int ) )
+captionCoordinates caption totalWidth totalHeight =
     let
         w =
-            caption.width
+            caption.width * totalWidth // 100
 
         wo2 =
             w // 2
 
         h =
-            caption.height
+            caption.height * totalHeight // 100
 
         ho2 =
             h // 2
@@ -158,42 +162,48 @@ captionXY caption totalWidth totalHeight =
         rightx =
             totalWidth - w
 
+        topy =
+            2
+
         middley =
             totalMiddle - ho2
 
         bottomy =
-            totalHeight - h
+            totalHeight - h - 1
+
+        position =
+            case caption.position of
+                TopLeft ->
+                    ( 0, topy )
+
+                TopCenter ->
+                    ( centerx, topy )
+
+                TopRight ->
+                    ( rightx, topy )
+
+                MiddleLeft ->
+                    ( 0, middley )
+
+                MiddleCenter ->
+                    ( centerx, middley )
+
+                MiddleRight ->
+                    ( rightx, middley )
+
+                BottomLeft ->
+                    ( 0, bottomy )
+
+                BottomCenter ->
+                    ( centerx, bottomy )
+
+                BottomRight ->
+                    ( rightx, bottomy )
+
+                ExplicitPosition x y ->
+                    ( x, y )
     in
-    case caption.position of
-        TopLeft ->
-            ( 0, 0 )
-
-        TopCenter ->
-            ( centerx, 0 )
-
-        TopRight ->
-            ( rightx, 0 )
-
-        MiddleLeft ->
-            ( 0, middley )
-
-        MiddleCenter ->
-            ( centerx, middley )
-
-        MiddleRight ->
-            ( rightx, middley )
-
-        BottomLeft ->
-            ( 0, bottomy )
-
-        BottomCenter ->
-            ( centerx, bottomy )
-
-        BottomRight ->
-            ( rightx, bottomy )
-
-        ExplicitPosition x y ->
-            ( x, y )
+    ( position, ( w, h ) )
 
 
 {-| Packaged as a type, since it may change.
@@ -218,15 +228,25 @@ type alias Meme =
 
 sampleCaptions : List Caption
 sampleCaptions =
-    [ { text = "Is this a pigeon?"
+    [ { text = "I ask you:"
+      , position = TopCenter
+      , alignment = Center
+      , font = "avant-garde"
+      , fontsize = 10
+      , fontcolor = "white"
+      , bold = True
+      , width = 75
+      , height = 15
+      }
+    , { text = "Is this a pigeon?"
       , position = BottomCenter
       , alignment = Center
       , font = "avant-garde"
-      , fontsize = 50
+      , fontsize = 10
       , fontcolor = "white"
       , bold = True
-      , width = 500
-      , height = 100
+      , width = 75
+      , height = 15
       }
     ]
 
@@ -242,6 +262,9 @@ emptyMeme =
 
 type alias Model =
     { meme : Meme
+    , selectedPosition : Maybe TextPosition
+    , showCaptionBorders : Bool
+    , fontDict : Dict String Font
     , key : Key
     , funnelState : PortFunnels.State
     , msg : Maybe String
@@ -250,6 +273,7 @@ type alias Model =
 
 type Msg
     = Noop
+    | SelectCaption (Maybe TextPosition)
     | HandleUrlRequest UrlRequest
     | HandleUrlChange Url
     | ProcessLocalStorage Value
@@ -281,6 +305,9 @@ localStoragePrefix =
 init : Value -> Url -> Key -> ( Model, Cmd Msg )
 init flags url key =
     { meme = emptyMeme
+    , selectedPosition = Just TopCenter
+    , showCaptionBorders = True
+    , fontDict = safeFontDict
     , key = key
     , funnelState = PortFunnels.initialState localStoragePrefix
     , msg = Nothing
@@ -293,6 +320,17 @@ update msg model =
     case msg of
         Noop ->
             model |> withNoCmd
+
+        SelectCaption position ->
+            { model
+                | selectedPosition =
+                    if position == model.selectedPosition then
+                        Nothing
+
+                    else
+                        position
+            }
+                |> withNoCmd
 
         HandleUrlRequest request ->
             ( model
@@ -417,7 +455,7 @@ view model =
         [ div [ align "center" ]
             [ h2 [] [ text "Elm Meme Maker" ]
             , p []
-                [ renderMeme model.meme ]
+                [ renderMeme model ]
             , p []
                 [ text <| chars.copyright ++ " 2019 Bill St. Clair"
                 , br
@@ -454,9 +492,12 @@ fontExample font =
         ]
 
 
-renderMeme : Meme -> Html Msg
-renderMeme meme =
+renderMeme : Model -> Html Msg
+renderMeme model =
     let
+        meme =
+            model.meme
+
         image =
             meme.image
 
@@ -472,10 +513,14 @@ renderMeme meme =
     svg [ width w, height h ] <|
         List.concat
             [ [ Svg.image
-                    [ width w, height h, xlinkHref url ]
+                    [ width w
+                    , height h
+                    , xlinkHref url
+                    , Svg.Events.onClick <| SelectCaption Nothing
+                    ]
                     []
               ]
-            , List.map (renderCaption meme) meme.captions
+            , List.map (renderCaption model) meme.captions
             ]
 
 
@@ -484,17 +529,29 @@ tos int =
     String.fromInt int
 
 
-renderCaption : Meme -> Caption -> Svg msg
-renderCaption meme caption =
+renderCaption : Model -> Caption -> Svg Msg
+renderCaption model caption =
     let
-        ( cx, cy ) =
-            captionXY caption meme.width meme.height
+        meme =
+            model.meme
+
+        isSelected =
+            Just caption.position == model.selectedPosition
+
+        ( ( cx, cy ), ( cw, ch ) ) =
+            captionCoordinates caption meme.width meme.height
+
+        showCaptionBorders =
+            model.showCaptionBorders || isSelected
 
         alignment =
             textAlignmentString caption.alignment
 
         font =
-            Maybe.withDefault defaultFont <| Dict.get caption.font safeFontDict
+            Maybe.withDefault defaultFont <| Dict.get caption.font model.fontDict
+
+        fontsize =
+            caption.fontsize * meme.height // 100
 
         weight =
             if caption.bold then
@@ -502,21 +559,57 @@ renderCaption meme caption =
 
             else
                 "normal"
+
+        stroke =
+            if isSelected then
+                "stroke:red;"
+
+            else
+                "stroke:black;"
+
+        strokeOpacity =
+            if showCaptionBorders then
+                "stroke-opacity:1;"
+
+            else
+                "stroke-opacity:0;"
+
+        dashArray =
+            if isSelected then
+                "8,5"
+
+            else
+                "2,2"
+
+        rectStyle =
+            "fill-opacity:0;stroke-width:2;" ++ stroke ++ strokeOpacity
     in
-    foreignObject
-        [ x (tos cx)
-        , y (tos cy)
-        , width (tos caption.width)
-        , height (tos caption.height)
-        ]
-        [ div
-            [ style "text-align" alignment
-            , fontAttribute font
-            , style "font-size" <| tos caption.fontsize ++ "px"
-            , style "color" caption.fontcolor
-            , style "font-weight" weight
+    Svg.g []
+        [ foreignObject
+            [ x (tos cx)
+            , y (tos cy)
+            , width (tos cw)
+            , height (tos ch)
             ]
-            [ text caption.text ]
+            [ div
+                [ style "text-align" alignment
+                , fontAttribute font
+                , style "font-size" <| tos fontsize ++ "px"
+                , style "color" caption.fontcolor
+                , style "font-weight" weight
+                ]
+                [ text caption.text ]
+            ]
+        , rect
+            [ x (tos cx)
+            , y (tos cy)
+            , width (tos cw)
+            , height (tos ch)
+            , strokeDasharray dashArray
+            , Svg.Attributes.style rectStyle
+            , Svg.Events.onClick <| SelectCaption (Just caption.position)
+            ]
+            []
         ]
 
 
