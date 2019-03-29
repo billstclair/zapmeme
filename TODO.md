@@ -1,6 +1,6 @@
 # TODO
 
-This file tracks bugs and ideas for new features.n
+This file tracks bugs and ideas for new features.
 
 ## Necessary Features
 
