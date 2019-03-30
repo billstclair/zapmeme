@@ -16,11 +16,13 @@ import Browser exposing (Document, UrlRequest(..))
 import Browser.Dom as Dom exposing (Viewport)
 import Browser.Events as Events
 import Browser.Navigation as Navigation exposing (Key)
+import Bytes exposing (Bytes)
 import Cmd.Extra exposing (withCmd, withCmds, withNoCmd)
 import CustomElement.ImageProperties as ImageProperties exposing (ImageProperties)
 import CustomElement.SvgToDataUrl as SvgToDataUrl exposing (ReturnedFile, ReturnedUrl)
 import Dict exposing (Dict)
 import File exposing (File)
+import File.Download as Download
 import File.Select as Select
 import FormatNumber exposing (format)
 import FormatNumber.Locales exposing (Locale, usLocale)
@@ -100,6 +102,7 @@ import Svg.Attributes
         )
 import Svg.Events
 import Task
+import Time
 import Url exposing (Url)
 import ZapMeme.Data exposing (data)
 
@@ -375,6 +378,10 @@ type alias Model =
     , maxHeight : Int
     , file : Maybe File
     , triggerImageProperties : Int
+    , downloadFile : Maybe File
+    , triggerReturnedFile : Int
+    , fileName : String
+    , mimeType : String
     , fontDict : Dict String Font
     , key : Key
     , funnelState : PortFunnels.State
@@ -394,6 +401,7 @@ type alias Inputs =
     , bold : Bool
     , width : String
     , height : String
+    , fileName : String
     }
 
 
@@ -409,6 +417,7 @@ initialInputs =
     , bold = True
     , width = "75"
     , height = "15"
+    , fileName = "meme"
     }
 
 
@@ -424,6 +433,9 @@ type Msg
     | ReceiveImageFile File
     | ReceiveImageUrl String
     | ReceiveImageProperties ImageProperties
+    | GetReturnedFile
+    | ReceiveReturnedFile ReturnedFile
+    | ReceiveReturnedBytes Bytes
     | SetImageUrl String
     | SetMemeImageUrl
     | SetMaxWidth String
@@ -438,6 +450,8 @@ type Msg
     | SetBold Bool
     | SetWidth String
     | SetHeight String
+    | SetFileName String
+    | StartDownload String String
     | HandleUrlRequest UrlRequest
     | HandleUrlChange Url
     | ProcessLocalStorage Value
@@ -477,6 +491,10 @@ init flags url key =
     , maxHeight = 600
     , file = Nothing
     , triggerImageProperties = 0
+    , downloadFile = Nothing
+    , triggerReturnedFile = 0
+    , fileName = "mime.jpg"
+    , mimeType = "image/jpeg"
     , fontDict = safeFontDict
     , key = key
     , funnelState = PortFunnels.initialState localStoragePrefix
@@ -524,6 +542,7 @@ selectCaption position model =
                         , bold = caption.bold
                         , width = tos caption.width
                         , height = tos caption.height
+                        , fileName = model.inputs.fileName
                         }
     in
     { model
@@ -715,6 +734,41 @@ update msg model =
                 }
                     |> withNoCmd
 
+        StartDownload mimeType extension ->
+            { model
+                | mimeType = mimeType
+                , fileName = inputs.fileName ++ extension
+            }
+                |> withCmd (Task.perform (\_ -> GetReturnedFile) Time.now)
+
+        GetReturnedFile ->
+            { model | triggerReturnedFile = model.triggerReturnedFile + 1 }
+                |> withNoCmd
+
+        ReceiveReturnedFile returnedFile ->
+            let
+                downloadFile =
+                    returnedFile.file
+            in
+            { model | downloadFile = Just downloadFile }
+                |> withCmd
+                    (Task.perform ReceiveReturnedBytes <|
+                        File.toBytes downloadFile
+                    )
+
+        ReceiveReturnedBytes bytes ->
+            case model.downloadFile of
+                Nothing ->
+                    model |> withNoCmd
+
+                Just file ->
+                    { model | file = Nothing }
+                        |> withCmd
+                            (Download.bytes (File.name file)
+                                (File.mime file)
+                                bytes
+                            )
+
         SetImageUrl string ->
             { model
                 | inputs = { inputs | imageUrl = string }
@@ -824,6 +878,13 @@ update msg model =
                     { inputs | height = string }
             }
                 |> updateCaption (\c -> { c | height = parseInt 75 string })
+                |> withNoCmd
+
+        SetFileName name ->
+            { model
+                | inputs =
+                    { inputs | fileName = name }
+            }
                 |> withNoCmd
 
         HandleUrlRequest request ->
@@ -1047,6 +1108,14 @@ view model =
                     , ImageProperties.onImageProperties ReceiveImageProperties
                     ]
                     []
+                , SvgToDataUrl.svgToDataUrl
+                    [ SvgToDataUrl.returnedFileParameters svgId
+                        model.fileName
+                        model.mimeType
+                    , SvgToDataUrl.triggerReturnedFile model.triggerReturnedFile
+                    , SvgToDataUrl.onReturnedFile ReceiveReturnedFile
+                    ]
+                    []
                 ]
             , p []
                 [ button [ onClick AddCaption ]
@@ -1260,6 +1329,24 @@ renderInputs scale model =
                     ]
                     []
                 , text "%"
+                ]
+            ]
+        , tr []
+            [ th "File Name:"
+            , td []
+                [ input
+                    [ type_ "text"
+                    , size 20
+                    , onInput SetFileName
+                    , value inputs.fileName
+                    ]
+                    []
+                , b " Download: "
+                , button [ onClick <| StartDownload "image/jpeg" ".jpg" ]
+                    [ text "JPEG" ]
+                , text " "
+                , button [ onClick <| StartDownload "image/png" ".png" ]
+                    [ text "PNG" ]
                 ]
             ]
         ]

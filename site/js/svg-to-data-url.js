@@ -85,20 +85,28 @@ customElements.define('svg-to-data-url', class extends HTMLElement {
     return this._returnedFile;
   }
 
+  get returnedUrlParamaters() {
+    return this._returnedUrlParameters;
+  }
+
+  set returnedUrlParameters(object) {
+    this._returnedUrlParameters = object;
+  }
+
   get triggerReturnedUrl() {
     return this._triggerReturnedUrl;
   }
 
-  set triggerReturnedUrl(object) {
-    if (typeof(object) == 'object') {
-      var svgId = object.svgId;
-      var mimeType = object.mimeType;
-      var trigger = object.trigger;
+  set triggerReturnedUrl(trigger) {
+    // Don't trigger on first set.
+    var doit = this._triggerReturnedUrl !== null;
+    this._triggerReturnedUrl = trigger;
+    if (doit) {
+      var parameters = this._returnedUrlParameters;
+      if (typeof(parameters) == 'object') {
+        var svgId = parameters.svgId;
+        var mimeType = parameters.mimeType;
 
-      // Don't trigger on first set.
-      var doit = this._triggerReturnedUrl !== null;
-      this._triggerReturnedUrl = trigger;
-      if (doit) {
         this._returnedUrl = { svgId : svgId,
                               mimeType: mimeType
                             }
@@ -123,21 +131,29 @@ customElements.define('svg-to-data-url', class extends HTMLElement {
     }
   }
 
+  get returnedFileParamaters() {
+    return this._returnedFileParameters;
+  }
+
+  set returnedFileParameters(object) {
+    this._returnedFileParameters = object;
+  }
+
   get triggerReturnedFile() {
     return this._triggerReturnedFile;
   }
 
-  set triggerReturnedFile(object) {
-    if (typeof(object) == 'object') {
-      var svgId = object.svgId;
-      var fileName = object.fileName
-      var mimeType = object.mimeType;
-      var trigger = object.trigger;
+  set triggerReturnedFile(trigger) {
+    // Don't trigger on first set.
+    var doit = this._triggerReturnedFile !== null;
+    this._triggerReturnedFile = trigger;
+    if (doit) {
+      var parameters = this._returnedFileParameters;
+      if (typeof(parameters) == 'object') {
+        var svgId = parameters.svgId;
+        var fileName = parameters.fileName
+        var mimeType = parameters.mimeType;
 
-      // Don't trigger on first set.
-      var doit = this._triggerReturnedFile !== null;
-      this._triggerReturnedFile = trigger;
-      if (doit) {
         this._returnedFile = { svgId: svgId,
                                fileName: fileName,
                                mimeType: mimeType

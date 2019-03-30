@@ -13,7 +13,8 @@
 module CustomElement.SvgToDataUrl exposing
     ( ReturnedUrl, ReturnedFile
     , svgToDataUrl
-    , triggerReturnedUrl, triggerReturnedFile
+    , returnedUrlParameters, triggerReturnedUrl
+    , returnedFileParameters, triggerReturnedFile
     , onReturnedUrl, onReturnedFile
     , returnedUrlDecoder, returnedFileDecoder
     )
@@ -35,7 +36,8 @@ This code won't do anything unless `site/js/svg-to-data-url.js` is loaded.
 
 # Attributes
 
-@docs triggerReturnedUrl, triggerReturnedFile
+@docs returnedUrlParameters, triggerReturnedUrl
+@docs returnedFileParameters, triggerReturnedFile
 
 
 # Events
@@ -83,29 +85,43 @@ svgToDataUrl =
     Html.node "svg-to-data-url"
 
 
-{-| This is how you trigger the event a returned Url.
+{-| Set parameters for triggerReturnedUrl.
 -}
-triggerReturnedUrl : String -> String -> Int -> Attribute msg
-triggerReturnedUrl svgId mimeType trigger =
-    property "triggerReturnedUrl" <|
+returnedUrlParameters : String -> String -> Attribute msg
+returnedUrlParameters svgId mimeType =
+    property "returnedUrlParameters" <|
         JE.object
             [ ( "svgId", JE.string svgId )
             , ( "mimeType", JE.string mimeType )
-            , ( "trigger", JE.int trigger )
             ]
 
 
-{-| This is how you trigger the event a returned File
+{-| This is how you trigger the onReturnedUrl event.
 -}
-triggerReturnedFile : String -> String -> String -> Int -> Attribute msg
-triggerReturnedFile svgId fileName mimeType trigger =
+triggerReturnedUrl : Int -> Attribute msg
+triggerReturnedUrl trigger =
     property "triggerReturnedUrl" <|
+        JE.int trigger
+
+
+{-| Set parameters for triggerReturnedFile.
+-}
+returnedFileParameters : String -> String -> String -> Attribute msg
+returnedFileParameters svgId fileName mimeType =
+    property "returnedFileParameters" <|
         JE.object
             [ ( "svgId", JE.string svgId )
             , ( "fileName", JE.string fileName )
             , ( "mimeType", JE.string mimeType )
-            , ( "trigger", JE.int trigger )
             ]
+
+
+{-| This is how you trigger the onReturnedFile event.
+-}
+triggerReturnedFile : Int -> Attribute msg
+triggerReturnedFile trigger =
+    property "triggerReturnedFile" <|
+        JE.int trigger
 
 
 {-| This is how you receive the result of `triggerReturnedUrl`.
