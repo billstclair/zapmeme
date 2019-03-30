@@ -1,0 +1,28 @@
+<html>
+  <head>
+    <title>Teal</title>
+    <script>
+      var div, h;
+      function onResize() {
+        div.style.paddingTop = 0;
+        h = div.offsetHeight;
+        div.style.paddingTop = ((window.innerHeight-h)/2) + 'px';
+      }
+    </script>
+  </head>
+  <body style='margin:0;' onresize='onResize()'>
+    <svg style='width:100%;height:100%'>
+      <rect id='rect' x='0' y='0' width='100%' height='100%' style='fill:rgb(0,128,128);' />
+      <foreignObject x='0' y='0' width='100%' height='100%'>
+        <div id='div' style='font-family:sans-serif;font-weight:bold;text-align:center;font-size:128px;color:rgb(128,0,0);'>
+          Teal
+        </div>
+      </foreignObject>
+    </svg>
+    <script>
+      div = document.getElementById('div');
+      h = div.offsetHeight;
+      onResize();
+    </script>
+  </body>
+</html>

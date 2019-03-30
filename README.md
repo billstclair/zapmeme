@@ -20,7 +20,7 @@ Then aim your browser at http://localhost:8000/src/Main.elm
 
 ## Technical details
 
-In order to size the text to the background image, we need to know the size of the uploaded background image. This relies on the `HtmlImageElement.naturalWidth` and `HtmlImageElement.naturalHeight` properties, as documented at https://developer.mozilla.org/en-US/docs/Web/API/HTMLImageElement. They are accessed in Elm via `billstclair/elm-image-properties` (to be done).
+In order to size the text to the background image, we need to know the size of the uploaded background image. This relies on the `HtmlImageElement.naturalWidth` and `HtmlImageElement.naturalHeight` properties, as documented at https://developer.mozilla.org/en-US/docs/Web/API/HTMLImageElement. They are accessed in Elm via [CustomElement.ImageProperties](src/CustomElement/ImageProperties).
 
 I plan to use the ideas in Matti Paksula's [From SVG to Canvas and Back](http://svgopen.org/2010/papers/62-From_SVG_to_Canvas_and_Back/) to enable converting the meme to a PNG file for download.
 

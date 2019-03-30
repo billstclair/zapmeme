@@ -17,7 +17,12 @@ import Browser.Dom as Dom exposing (Viewport)
 import Browser.Events as Events
 import Browser.Navigation as Navigation exposing (Key)
 import Cmd.Extra exposing (withCmd, withCmds, withNoCmd)
+import CustomElement.ImageProperties as ImageProperties exposing (ImageProperties)
 import Dict exposing (Dict)
+import File exposing (File)
+import File.Select as Select
+import FormatNumber exposing (format)
+import FormatNumber.Locales exposing (Locale, usLocale)
 import Html
     exposing
         ( Attribute
@@ -218,14 +223,14 @@ stringToAlignment string =
             Center
 
 
-{-| fontsize, widdth, and height are percentages of the image size
+{-| fontsize, width, and height are percentages of the image size
 -}
 type alias Caption =
     { text : String
     , position : TextPosition
     , alignment : TextAlignment
     , font : String
-    , fontsize : Int
+    , fontsize : Float
     , fontcolor : String
     , bold : Bool
     , width : Int
@@ -364,6 +369,10 @@ type alias Model =
     , deletedCaption : Maybe Caption
     , showCaptionBorders : Bool
     , inputs : Inputs
+    , maxWidth : Int
+    , maxHeight : Int
+    , file : Maybe File
+    , triggerImageProperties : Int
     , fontDict : Dict String Font
     , key : Key
     , funnelState : PortFunnels.State
@@ -374,6 +383,7 @@ type alias Model =
 type alias Inputs =
     { -- For the selected caption
       text : String
+    , imageUrl : String
     , position : TextPosition
     , alignment : TextAlignment
     , font : String
@@ -388,6 +398,7 @@ type alias Inputs =
 initialInputs : Inputs
 initialInputs =
     { text = ""
+    , imageUrl = ""
     , position = TopCenter
     , alignment = Center
     , font = "avante-garde"
@@ -407,6 +418,14 @@ type Msg
     | UndoDeletion
     | SetShowCaptionBorders Bool
     | SetText String
+    | SelectImageFile
+    | ReceiveImageFile File
+    | ReceiveImageUrl String
+    | ReceiveImageProperties ImageProperties
+    | SetImageUrl String
+    | SetMemeImageUrl
+    | SetMaxWidth String
+    | SetMaxHeight String
     | SetPosition TextPosition
     | SetPositionString String
     | SetAlignment TextAlignment
@@ -452,6 +471,10 @@ init flags url key =
     , selectedPosition = Nothing
     , showCaptionBorders = False
     , inputs = initialInputs
+    , maxWidth = 800
+    , maxHeight = 800
+    , file = Nothing
+    , triggerImageProperties = 0
     , fontDict = safeFontDict
     , key = key
     , funnelState = PortFunnels.initialState localStoragePrefix
@@ -486,10 +509,11 @@ selectCaption position model =
 
                     Just caption ->
                         { text = caption.text
+                        , imageUrl = model.meme.image.url
                         , position = caption.position
                         , alignment = caption.alignment
                         , font = caption.font
-                        , fontsize = tos caption.fontsize
+                        , fontsize = fontFormat caption.fontsize
                         , fontcolor = caption.fontcolor
                         , bold = caption.bold
                         , width = tos caption.width
@@ -531,6 +555,11 @@ toi default string =
     Maybe.withDefault default <| String.toInt string
 
 
+tof : Float -> String -> Float
+tof default string =
+    Maybe.withDefault default <| String.toFloat string
+
+
 addCaption : Model -> ( Model, Cmd Msg )
 addCaption model =
     let
@@ -559,7 +588,7 @@ addCaption model =
                     , position = position
                     , alignment = inputs.alignment
                     , font = inputs.font
-                    , fontsize = toi 10 inputs.fontsize
+                    , fontsize = tof 10 inputs.fontsize
                     , fontcolor = "white"
                     , bold = True
                     , width = toi 75 inputs.width
@@ -652,6 +681,71 @@ update msg model =
                 |> updateCaption (\c -> { c | text = string })
                 |> withNoCmd
 
+        SelectImageFile ->
+            model |> withCmd (Select.file imageMimeTypes ReceiveImageFile)
+
+        ReceiveImageFile file ->
+            { model | file = Just file }
+                |> withCmd (Task.perform ReceiveImageUrl <| File.toUrl file)
+
+        ReceiveImageUrl url ->
+            receiveImageUrl url model
+
+        ReceiveImageProperties properties ->
+            if properties.width < 0 || properties.height < 0 then
+                model |> withNoCmd
+
+            else
+                let
+                    meme =
+                        model.meme
+                in
+                { model
+                    | meme =
+                        { meme
+                            | width = properties.width
+                            , height = properties.height
+                        }
+                }
+                    |> withNoCmd
+
+        SetImageUrl string ->
+            { model
+                | inputs = { inputs | imageUrl = string }
+            }
+                |> withNoCmd
+
+        SetMemeImageUrl ->
+            let
+                meme =
+                    model.meme
+
+                image =
+                    meme.image
+            in
+            { model
+                | meme =
+                    { meme
+                        | image =
+                            { image | url = inputs.imageUrl }
+                    }
+            }
+                |> withNoCmd
+
+        SetMaxWidth string ->
+            { model
+                | maxWidth =
+                    toi model.maxWidth string
+            }
+                |> withNoCmd
+
+        SetMaxHeight string ->
+            { model
+                | maxHeight =
+                    toi model.maxHeight string
+            }
+                |> withNoCmd
+
         SetPosition position ->
             setPosition position model
 
@@ -686,7 +780,7 @@ update msg model =
                 | inputs =
                     { inputs | fontsize = string }
             }
-                |> updateCaption (\c -> { c | fontsize = parseInt 10 string })
+                |> updateCaption (\c -> { c | fontsize = tof 10 string })
                 |> withNoCmd
 
         SetFontColor string ->
@@ -754,6 +848,25 @@ update msg model =
                     res
 
 
+receiveImageUrl : String -> Model -> ( Model, Cmd Msg )
+receiveImageUrl url model =
+    let
+        meme =
+            model.meme
+
+        image =
+            meme.image
+    in
+    { model
+        | meme =
+            { meme
+                | image = { image | url = url }
+            }
+        , triggerImageProperties = model.triggerImageProperties + 1
+    }
+        |> withNoCmd
+
+
 parseInt : Int -> String -> Int
 parseInt default string =
     Maybe.withDefault default <| String.toInt string
@@ -813,6 +926,11 @@ storageHandler response state model =
 br : Html msg
 br =
     Html.br [] []
+
+
+b : String -> Html msg
+b string =
+    Html.b [] [ text string ]
 
 
 defaultFont : Font
@@ -876,14 +994,54 @@ fontAttribute font =
     style "font-family" font.family
 
 
+type alias ScaleWH =
+    { width : Int
+    , height : Int
+    , scale : Float
+    }
+
+
+scalewh : ( Int, Int ) -> ( Int, Int ) -> ScaleWH
+scalewh ( maxw, maxh ) ( w, h ) =
+    let
+        fw =
+            toFloat w
+
+        fh =
+            toFloat h
+
+        wscale =
+            toFloat (max 100 maxw) / fw
+
+        hscale =
+            toFloat (max 100 maxh) / fh
+
+        scale =
+            min 1 (min wscale hscale)
+    in
+    ScaleWH (round <| scale * fw) (round <| scale * fh) scale
+
+
 view : Model -> Document Msg
 view model =
+    let
+        ( memeHtml, scale ) =
+            renderMeme model
+    in
     { title = "ZAP Meme"
     , body =
         [ div [ align "center" ]
             [ h2 [] [ text "ZAP Meme" ]
             , p []
-                [ renderMeme model ]
+                [ memeHtml
+                , ImageProperties.imageProperties
+                    [ ImageProperties.imageId imageId
+                    , ImageProperties.triggerImageProperties
+                        model.triggerImageProperties
+                    , ImageProperties.onImageProperties ReceiveImageProperties
+                    ]
+                    []
+                ]
             , p []
                 [ button [ onClick AddCaption ]
                     [ text "Add Caption" ]
@@ -901,7 +1059,7 @@ view model =
                     _ ->
                         button [ onClick UndoDeletion ]
                             [ text "Undo Deletion" ]
-                , renderInputs model
+                , renderInputs scale model
                 ]
             , fontParagraph
             , p []
@@ -920,7 +1078,10 @@ view model =
 
 th : String -> Html msg
 th string =
-    Html.th [ textalign "right" ]
+    Html.th
+        [ style "vertical-align" "top"
+        , textalign "right"
+        ]
         [ text string ]
 
 
@@ -929,8 +1090,8 @@ textalign string =
     style "text-align" string
 
 
-renderInputs : Model -> Html Msg
-renderInputs model =
+renderInputs : ScaleWH -> Model -> Html Msg
+renderInputs scale model =
     let
         inputs =
             model.inputs
@@ -942,7 +1103,7 @@ renderInputs model =
         [ tr []
             [ td [ colspan 2 ]
                 [ textarea
-                    [ rows 4
+                    [ rows 3
                     , cols 50
                     , style "font-size" "20px"
                     , onInput SetText
@@ -953,28 +1114,100 @@ renderInputs model =
                 ]
             ]
         , tr []
-            [ th "Position:"
+            [ th "Image:"
             , td []
-                [ positionSelector isDisabled model ]
+                [ button [ onClick <| ReceiveImageUrl initialImage.url ]
+                    [ text "Use Default" ]
+                , text " "
+                , button [ onClick SelectImageFile ]
+                    [ text "Choose File" ]
+                , br
+                , input
+                    [ type_ "text"
+                    , size 20
+                    , onInput SetImageUrl
+                    , value inputs.imageUrl
+                    ]
+                    []
+                , button [ onClick SetMemeImageUrl ]
+                    [ text "Use URL" ]
+                ]
             ]
         , tr []
-            [ th "Text Alignment:"
+            [ th "Max Width:"
+            , let
+                meme =
+                    model.meme
+              in
+              td []
+                [ input
+                    [ type_ "text"
+                    , size 5
+                    , onInput SetMaxWidth
+                    , value <| tos model.maxWidth
+                    ]
+                    []
+                , b " Height: "
+                , input
+                    [ type_ "text"
+                    , size 5
+                    , onInput SetMaxHeight
+                    , value <| tos model.maxHeight
+                    ]
+                    []
+                , br
+                , span [ style "font-size" "80%" ]
+                    [ text "("
+                    , text <| tos meme.width
+                    , text " x "
+                    , text <| tos meme.height
+                    , text ") * "
+                    , text <| format usLocale scale.scale
+                    , text " = ("
+                    , text <| tos scale.width
+                    , text " x "
+                    , text <| tos scale.height
+                    , text ")"
+                    ]
+                ]
+            ]
+        , tr []
+            [ th "Position:"
             , td []
-                [ alignmentSelector isDisabled model ]
+                [ positionSelector isDisabled model
+                , b " Borders: "
+                , input
+                    [ type_ "checkbox"
+                    , onCheck SetShowCaptionBorders
+                    , checked model.showCaptionBorders
+                    ]
+                    []
+                ]
+            ]
+        , tr []
+            [ th "Alignment:"
+            , td []
+                [ alignmentSelector isDisabled model
+                , b " Bold: "
+                , input
+                    [ type_ "checkbox"
+                    , disabled isDisabled
+                    , onCheck SetBold
+                    , checked inputs.bold
+                    ]
+                    []
+                ]
             ]
         , tr []
             [ th "Font:"
             , td []
-                [ fontSelector isDisabled model ]
-            ]
-        , tr []
-            [ th "Font Height:"
-            , td []
-                [ input
+                [ fontSelector isDisabled model
+                , b " Height: "
+                , input
                     [ type_ "text"
                     , disabled isDisabled
                     , textalign "right"
-                    , size 3
+                    , size 5
                     , onInput SetFontSize
                     , value inputs.fontsize
                     ]
@@ -998,18 +1231,6 @@ renderInputs model =
                 ]
             ]
         , tr []
-            [ th "Bold:"
-            , td []
-                [ input
-                    [ type_ "checkbox"
-                    , disabled isDisabled
-                    , onCheck SetBold
-                    , checked inputs.bold
-                    ]
-                    []
-                ]
-            ]
-        , tr []
             [ th "Width:"
             , td []
                 [ input
@@ -1022,12 +1243,8 @@ renderInputs model =
                     ]
                     []
                 , text "%"
-                ]
-            ]
-        , tr []
-            [ th "Height:"
-            , td []
-                [ input
+                , Html.b [] [ text " Height: " ]
+                , input
                     [ type_ "text"
                     , disabled isDisabled
                     , textalign "right"
@@ -1037,17 +1254,6 @@ renderInputs model =
                     ]
                     []
                 , text "%"
-                ]
-            ]
-        , tr []
-            [ th "Caption Borders:"
-            , td []
-                [ input
-                    [ type_ "checkbox"
-                    , onCheck SetShowCaptionBorders
-                    , checked model.showCaptionBorders
-                    ]
-                    []
                 ]
             ]
         ]
@@ -1235,7 +1441,7 @@ fontExample font =
         ]
 
 
-renderMeme : Model -> Html Msg
+renderMeme : Model -> ( Html Msg, ScaleWH )
 renderMeme model =
     let
         meme =
@@ -1244,27 +1450,33 @@ renderMeme model =
         image =
             meme.image
 
-        h =
-            String.fromInt meme.height
+        scale =
+            scalewh ( model.maxWidth, model.maxHeight ) ( meme.width, meme.height )
 
         w =
-            String.fromInt meme.width
+            String.fromInt scale.width
+
+        h =
+            String.fromInt scale.height
 
         url =
             meme.image.url
     in
-    svg [ width w, height h ] <|
+    ( svg [ width w, height h ] <|
         List.concat
             [ [ Svg.image
-                    [ width w
+                    [ Svg.Attributes.id imageId
+                    , width w
                     , height h
                     , xlinkHref url
                     , Svg.Events.onClick <| SelectCaption Nothing
                     ]
                     []
               ]
-            , List.map (renderCaption model) meme.captions
+            , List.map (renderCaption model scale) meme.captions
             ]
+    , scale
+    )
 
 
 tos : Int -> String
@@ -1272,8 +1484,8 @@ tos int =
     String.fromInt int
 
 
-renderCaption : Model -> Caption -> Svg Msg
-renderCaption model caption =
+renderCaption : Model -> ScaleWH -> Caption -> Svg Msg
+renderCaption model scale caption =
     let
         meme =
             model.meme
@@ -1282,7 +1494,7 @@ renderCaption model caption =
             Just caption.position == model.selectedPosition
 
         ( ( cx, cy ), ( cw, ch ) ) =
-            captionCoordinates caption meme.width meme.height
+            captionCoordinates caption scale.width scale.height
 
         showCaptionBorders =
             model.showCaptionBorders || isSelected
@@ -1295,7 +1507,7 @@ renderCaption model caption =
             Maybe.withDefault defaultFont <| Dict.get caption.font model.fontDict
 
         fontsize =
-            caption.fontsize * meme.height // 100
+            round (caption.fontsize * toFloat scale.height / 100)
 
         weight =
             if caption.bold then
@@ -1374,3 +1586,31 @@ chars =
     , copyright = codestr 0xA9
     , nbsp = codestr 0xA0
     }
+
+
+imageMimeTypes : List String
+imageMimeTypes =
+    [ "image/png", "image/jpeg", "image/gif" ]
+
+
+imageId : String
+imageId =
+    "meme-image"
+
+
+fontSizeLocale : Locale
+fontSizeLocale =
+    { usLocale | decimals = 1 }
+
+
+fontFormat : Float -> String
+fontFormat float =
+    let
+        res =
+            format fontSizeLocale float
+    in
+    if String.endsWith ".0" res then
+        String.dropRight 2 res
+
+    else
+        res
