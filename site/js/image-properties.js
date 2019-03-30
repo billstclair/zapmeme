@@ -51,12 +51,12 @@
         var tagName = image.tagName;
         if (typeof(tagName) == "string") {
           tagName = tagName.toLowerCase();
-          if (image.tagName == "img") {
+          if (tagName == "img") {
             // It's an <img>, the natural width and height are available now.
             this._width = image.naturalWidth;
             this._height = image.naturalHeight;
             window.setTimeout(dispatch, 1);
-          } else if (image.tagName == "image") {
+          } else if (tagName == "image") {
             var href = image.href;
             if (typeof(href) == 'object') {
               href = href.baseVal;
