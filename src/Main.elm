@@ -1,7 +1,7 @@
 ---------------------------------------------------------------------
 --
 -- Main.elm
--- Meme Machine top-level
+-- Zap Meme top-level
 -- Copyright (c) 2019 Bill St. Clair <billstclair@gmail.com>
 -- Some rights reserved.
 -- Distributed under the MIT License
@@ -100,6 +100,7 @@ import Svg.Attributes
 import Svg.Events
 import Task
 import Url exposing (Url)
+import ZapMeme.Data exposing (data)
 
 
 type TextPosition
@@ -317,7 +318,7 @@ type alias Image =
 
 
 initialImage =
-    { url = "images/is-this-a-pigeon.jpg"
+    { url = data.pigeon
     }
 
 
@@ -480,7 +481,11 @@ init flags url key =
     , funnelState = PortFunnels.initialState localStoragePrefix
     , msg = Nothing
     }
-        |> withNoCmd
+        |> withCmd
+            -- Need to do this so we compute the size
+            (Task.perform ReceiveImageUrl <|
+                Task.succeed initialImage.url
+            )
 
 
 findCaption : Maybe TextPosition -> List Caption -> Maybe Caption
@@ -1462,7 +1467,12 @@ renderMeme model =
         url =
             meme.image.url
     in
-    ( svg [ width w, height h ] <|
+    ( svg
+        [ Svg.Attributes.id svgId
+        , width w
+        , height h
+        ]
+      <|
         List.concat
             [ [ Svg.image
                     [ Svg.Attributes.id imageId
@@ -1591,6 +1601,11 @@ chars =
 imageMimeTypes : List String
 imageMimeTypes =
     [ "image/png", "image/jpeg", "image/gif" ]
+
+
+svgId : String
+svgId =
+    "svg"
 
 
 imageId : String
