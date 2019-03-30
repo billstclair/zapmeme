@@ -12,9 +12,9 @@ This file tracks bugs and ideas for new features.
   Outline fonts: [urbanfonts.com](https://www.urbanfonts.com/fonts/outline-fonts.htm),
   [Google (3 hits)](https://fonts.google.com/?query=outline),
   [Google search](https://www.google.com/search?q=fonts+with+outlines).
-** "You can fake outlines using 4 duplicates of the same text with a different
-   color, offset by n pixels in all directions, placed under the main text."
-   -- @meowski
+  * "You can fake outlines using 4 duplicates of the same text with a different
+     color, offset by n pixels in all directions, placed under the main text."
+     -- @meowski
 * Edit available fonts, in case you don't want all the supplied ones.
 * Allow import of Google fonts, and maybe some other repositories.
 
