@@ -24,7 +24,7 @@ In order to size the text to the background image, we need to know the size of t
 
 I plan to use the ideas in Matti Paksula's [From SVG to Canvas and Back](http://svgopen.org/2010/papers/62-From_SVG_to_Canvas_and_Back/) to enable converting the meme to a PNG file for download.
 
-Samuli Kaipiainen's code based on Paksula's paper is live at http://sampumon.github.io/SVG.toDataURL/butterfly_test.html, and is stored locally in `site/butterfly-test.html` and `site/svg_todataurl.js` (and `site/base64.js` for IE). The NPM package that generates `svg_todataurl.js` is at https://www.npmjs.com/package/svgtodatauri.
+Samuli Kaipiainen's code based on Paksula's paper is live at http://sampumon.github.io/SVG.toDataURL/butterfly_test.html, and is stored locally in `site/butterfly-test.html` and `site/svg-to-data-url.js` (and `site/base64.js` for IE). The NPM package that generated the initial version of `svg-to-data-url.js` is at https://www.npmjs.com/package/svgtodatauri.
 
 You can run the local copy by starting `elm reactor` as documented above, and aiming your browser at http://localhost:8000/site/butterfly-test.html.
 

@@ -18,6 +18,7 @@ import Browser.Events as Events
 import Browser.Navigation as Navigation exposing (Key)
 import Cmd.Extra exposing (withCmd, withCmds, withNoCmd)
 import CustomElement.ImageProperties as ImageProperties exposing (ImageProperties)
+import CustomElement.SvgToDataUrl as SvgToDataUrl exposing (ReturnedFile, ReturnedUrl)
 import Dict exposing (Dict)
 import File exposing (File)
 import File.Select as Select

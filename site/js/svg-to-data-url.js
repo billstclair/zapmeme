@@ -1,5 +1,21 @@
+//////////////////////////////////////////////////////////////////////
+//
+// svg-to-data-url.js
+// Define the `svg-to-data-url` custom element.
+// Also define the SVG.toDataURL() function.
+// Copyright (c) 2019 Bill St. Clair <billstclair@gmail.com>
+// Some rights reserved.
+// Distributed under the MIT License
+// See LICENSE
+//
+// SVGElement.toDataUrl code mostly Copyright (c) Samuli Kaipiainen.
+//
+//////////////////////////////////////////////////////////////////////
+
 /**
    The missing SVG.toDataURL library for your SVG elements.
+
+   Plus an Elm <svg-to-data-url> custom Html element that uses it.
    
    Usage: SVGElement.toDataURL( type, { options } )
 
@@ -47,6 +63,120 @@
    ¹ http://svgopen.org/2010/papers/62-From_SVG_to_Canvas_and_Back/#svg_to_canvas
 */
 
+(function() {
+  
+// <svg-to-data-url> custom element.
+customElements.define('svg-to-data-url', class extends HTMLElement {
+  constructor() {
+    super();
+    this._triggerReturnedUrl = null;
+    this._triggerReturnedFile = null;
+  }
+
+  connectedCallback() {
+    // Move along. Nothing to see here.
+  }
+
+  get returnedUrl() {
+    return this._returnedUrl;
+  }
+
+  get returnedFile() {
+    return this._returnedFile;
+  }
+
+  get triggerReturnedUrl() {
+    return this._triggerReturnedUrl;
+  }
+
+  set triggerReturnedUrl(object) {
+    if (typeof(object) == 'object') {
+      var svgId = object.svgId;
+      var mimeType = object.mimeType;
+      var trigger = object.trigger;
+
+      // Don't trigger on first set.
+      var doit = this._triggerReturnedUrl !== null;
+      this._triggerReturnedUrl = trigger;
+      if (doit) {
+        this._returnedUrl = { svgId : svgId,
+                              mimeType: mimeType
+                            }
+        var that = this;
+        function dispatch() {
+          that.dispatchEvent(new CustomEvent('returnedUrl'));
+        }
+
+        var svg = getSvgElement(svgId);
+        var tagName = svg.tagName;
+        if (typeof(tagName) == "string") {
+          if (tagName == "svg") {
+            function callback(url) {
+              that._returnedUrl.url = url;
+              window.setTimeout(dispatch, 1)
+            }
+            console.log('svg:', svg);
+            svg.toDataURL(mimeType, { callback: callback });
+          }
+        }
+      }
+    }
+  }
+
+  get triggerReturnedFile() {
+    return this._triggerReturnedFile;
+  }
+
+  set triggerReturnedFile(object) {
+    if (typeof(object) == 'object') {
+      var svgId = object.svgId;
+      var fileName = object.fileName
+      var mimeType = object.mimeType;
+      var trigger = object.trigger;
+
+      // Don't trigger on first set.
+      var doit = this._triggerReturnedFile !== null;
+      this._triggerReturnedFile = trigger;
+      if (doit) {
+        this._returnedFile = { svgId: svgId,
+                               fileName: fileName,
+                               mimeType: mimeType
+                             }
+        var that = this;
+        function dispatch() {
+          that.dispatchEvent(new CustomEvent('returnedFile'));
+        }
+
+        var svg = getSvgElement(svgId);
+        var tagName = svg.tagName;
+        if (typeof(tagName) == "string") {
+          if (tagName == "svg") {
+            function callback(file) {
+              that._returnedFile.file = file;
+              window.setTimeout(dispatch, 1)
+            }
+            svg.toDataURL('File', { callback: callback,
+                                    fileName: fileName,
+                                    mimeType: mimeType
+                                  });
+          }
+        }
+      }
+    }
+  }
+})
+
+function getSvgElement(svgId) {
+  var element = document.getElementById(svgId);
+  if (typeof(element) == 'object') {
+    return element;
+  }
+}
+
+})();  // execute function surrounding all the code above
+
+
+// SVG.toDataUrl definition
 SVGElement.prototype.toDataURL = function(type, options) {
   var _svg = this;
   

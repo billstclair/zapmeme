@@ -88,7 +88,7 @@ triggerImageProperties value =
         JE.int value
 
 
-{-| This is how you receive the caret selection and coordinates.
+{-| This is how you receive the image properties.
 -}
 onImageProperties : (ImageProperties -> msg) -> Attribute msg
 onImageProperties tagger =
