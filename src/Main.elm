@@ -105,19 +105,15 @@ import Task
 import Time
 import Url exposing (Url)
 import ZapMeme.Data exposing (data)
-
-
-type TextPosition
-    = TopLeft
-    | TopCenter
-    | TopRight
-    | MiddleLeft
-    | MiddleCenter
-    | MiddleRight
-    | BottomLeft
-    | BottomCenter
-    | BottomRight
-    | ExplicitPosition Int Int
+import ZapMeme.Types
+    exposing
+        ( Caption
+        , Font
+        , Image
+        , Meme
+        , TextAlignment(..)
+        , TextPosition(..)
+        )
 
 
 textPositionToString : TextPosition -> String
@@ -188,12 +184,6 @@ stringToTextPosition string =
             TopCenter
 
 
-type TextAlignment
-    = Left
-    | Right
-    | Center
-
-
 allAlignments : List TextAlignment
 allAlignments =
     [ Left, Center, Right ]
@@ -226,21 +216,6 @@ stringToAlignment string =
 
         _ ->
             Center
-
-
-{-| fontsize, width, and height are percentages of the image size
--}
-type alias Caption =
-    { text : String
-    , position : TextPosition
-    , alignment : TextAlignment
-    , font : String
-    , fontsize : Float
-    , fontcolor : String
-    , bold : Bool
-    , width : Int
-    , height : Int
-    }
 
 
 captionCoordinates : Caption -> Int -> Int -> ( ( Int, Int ), ( Int, Int ) )
@@ -314,23 +289,8 @@ captionCoordinates caption totalWidth totalHeight =
     ( position, ( w, h ) )
 
 
-{-| Packaged as a type, since it may change.
--}
-type alias Image =
-    { url : String
-    }
-
-
 initialImage =
     { url = data.pigeon
-    }
-
-
-type alias Meme =
-    { image : Image
-    , captions : List Caption
-    , height : Int
-    , width : Int
     }
 
 
@@ -1029,12 +989,6 @@ safeFontPairs =
     , ( "garamond", "Garamond,\"Garamond Antiqua\",times,serif" )
     , ( "avant-garde", "\"Century Gothic\",\"Avant Garde Gothic\",\"Avant Garde\",\"URW Gothic L\",helvetica,sans-serif" )
     ]
-
-
-type alias Font =
-    { font : String
-    , family : String
-    }
 
 
 safeFontList : List Font

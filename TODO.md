@@ -13,6 +13,9 @@ This file tracks bugs and ideas for new features.
   * "You can fake outlines using 4 duplicates of the same text with a different
      color, offset by n pixels in all directions, placed under the main text."
      -- @meowski
+    See [site/svg-outline.html](site/svg-outline.html).
+    It will be easy to provide an "outlined SVG" mode for captions,
+    as long as the user is happy to provide line breaks via "<br>".
 * Edit available fonts, in case you don't want all the supplied ones.
 * Allow import of Google fonts, and maybe some other repositories.
 

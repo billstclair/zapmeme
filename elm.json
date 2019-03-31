@@ -7,6 +7,7 @@
     "dependencies": {
         "direct": {
             "Janiczek/cmd-extra": "1.1.0",
+            "NoRedInk/elm-json-decode-pipeline": "1.0.0",
             "billstclair/elm-localstorage": "6.0.3",
             "billstclair/elm-port-funnel": "1.1.4",
             "cuducos/elm-format-number": "6.0.2",
