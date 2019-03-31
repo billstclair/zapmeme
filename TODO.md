@@ -4,8 +4,6 @@ This file tracks bugs and ideas for new features.
 
 ## Necessary Features
 
-* Upload background image, from file system or as URL.
-* Save PNG.
 * Persist everything.
 * Save/Restore persisted data as JSON, with optional compression to Base64.
 * More built-in fonts.
@@ -21,10 +19,12 @@ This file tracks bugs and ideas for new features.
 ## Nice Features
 
 * Markdown text.
-* Save JPEG.
 * Resize handles on caption borders.
 * Custom caption location, not just the nine current positions.
 * Stamps and ornaments, e.g. speech bubbles.
 * Custom SVG for user-defined stamps and ornaments.
 
 ## Bugs
+
+* Warn the user when they use a URL to specify the background image that it
+  won't appear in the downloaded image file.

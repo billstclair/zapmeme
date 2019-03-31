@@ -1089,6 +1089,11 @@ scalewh ( maxw, maxh ) ( w, h ) =
     ScaleWH (round <| scale * fw) (round <| scale * fh) scale
 
 
+style_ : String -> Html msg
+style_ string =
+    Html.node "style" [ type_ "text/css" ] [ text string ]
+
+
 view : Model -> Document Msg
 view model =
     let
@@ -1097,7 +1102,8 @@ view model =
     in
     { title = "ZAP Meme"
     , body =
-        [ div [ align "center" ]
+        [ div
+            [ align "center" ]
             [ h2 [] [ text "ZAP Meme" ]
             , p []
                 [ memeHtml
@@ -1512,7 +1518,7 @@ fontOption currentFont font =
 
 fontParagraph : Html msg
 fontParagraph =
-    p [ style "width" "40em" ] <|
+    p [ style "width" "80%" ] <|
         List.concat
             [ [ span
                     [ style "font-size" "110%"
