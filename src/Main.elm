@@ -105,6 +105,7 @@ import Task
 import Time
 import Url exposing (Url)
 import ZapMeme.Data exposing (data)
+import ZapMeme.EncodeDecode as ED
 import ZapMeme.Types
     exposing
         ( Caption
@@ -302,6 +303,7 @@ sampleCaptions =
       , font = "avant-garde"
       , fontsize = 10
       , fontcolor = "white"
+      , outlineColor = Nothing
       , bold = True
       , width = 75
       , height = 30
@@ -312,6 +314,7 @@ sampleCaptions =
       , font = "avant-garde"
       , fontsize = 10
       , fontcolor = "white"
+      , outlineColor = Nothing
       , bold = True
       , width = 75
       , height = 15
@@ -358,6 +361,8 @@ type alias Inputs =
     , font : String
     , fontsize : String
     , fontcolor : String
+    , isOutlined : Bool
+    , outlineColor : String
     , bold : Bool
     , width : String
     , height : String
@@ -374,6 +379,8 @@ initialInputs =
     , font = "avante-garde"
     , fontsize = "10"
     , fontcolor = "white"
+    , isOutlined = False
+    , outlineColor = "black"
     , bold = True
     , width = "75"
     , height = "15"
@@ -499,6 +506,14 @@ selectCaption position model =
                         , font = caption.font
                         , fontsize = fontFormat caption.fontsize
                         , fontcolor = caption.fontcolor
+                        , isOutlined = caption.outlineColor /= Nothing
+                        , outlineColor =
+                            case caption.outlineColor of
+                                Just color ->
+                                    color
+
+                                Nothing ->
+                                    model.inputs.outlineColor
                         , bold = caption.bold
                         , width = tos caption.width
                         , height = tos caption.height
@@ -575,6 +590,12 @@ addCaption model =
                     , font = inputs.font
                     , fontsize = tof 10 inputs.fontsize
                     , fontcolor = "white"
+                    , outlineColor =
+                        if inputs.isOutlined then
+                            Just inputs.outlineColor
+
+                        else
+                            Nothing
                     , bold = True
                     , width = toi 75 inputs.width
                     , height = toi 15 inputs.height

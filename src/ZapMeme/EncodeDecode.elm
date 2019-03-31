@@ -69,6 +69,14 @@ encodeCaption caption =
         , ( "font", JE.string caption.font )
         , ( "fontsize", JE.float caption.fontsize )
         , ( "fontcolor", JE.string caption.fontcolor )
+        , ( "outlineColor"
+          , case caption.outlineColor of
+                Just color ->
+                    JE.string color
+
+                Nothing ->
+                    JE.null
+          )
         , ( "bold", JE.bool caption.bold )
         , ( "width", JE.int caption.width )
         , ( "height", JE.int caption.height )
@@ -84,6 +92,7 @@ captionDecoder =
         |> required "font" JD.string
         |> required "fontsize" JD.float
         |> required "fontcolor" JD.string
+        |> required "outlineColor" (JD.nullable JD.string)
         |> required "bold" JD.bool
         |> required "width" JD.int
         |> required "height" JD.int

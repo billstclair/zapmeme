@@ -49,6 +49,7 @@ type alias Caption =
     , font : String
     , fontsize : Float
     , fontcolor : String
+    , outlineColor : Maybe String
     , bold : Bool
     , width : Int
     , height : Int
