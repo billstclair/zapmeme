@@ -104,6 +104,7 @@ import Svg.Attributes
         )
 import Svg.Button as SB exposing (Button, Content(..))
 import Svg.Events
+import Svg.Lazy
 import Task
 import Time
 import Url exposing (Url)
@@ -515,13 +516,13 @@ main =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
-        [ PortFunnels.subscriptions ProcessLocalStorage model
-        , case model.subscription of
+        [ case Debug.log "subscriptions" model.subscription of
             Nothing ->
                 Sub.none
 
             Just ( time, m, operation ) ->
                 Time.every time (\_ -> ButtonMsg m operation)
+        , PortFunnels.subscriptions ProcessLocalStorage model
         ]
 
 
@@ -898,7 +899,7 @@ update msg model =
                 wrapper =
                     \bm -> ButtonMsg bm operation
             in
-            case SB.checkSubscription m button of
+            case SB.checkSubscription (Debug.log "checkSubscription" m) button of
                 Just ( time, m2 ) ->
                     { model
                         | subscription =
@@ -1246,6 +1247,15 @@ type alias ScaleWH =
     }
 
 
+identityScale : Model -> ScaleWH
+identityScale model =
+    let
+        meme =
+            model.meme
+    in
+    ScaleWH meme.width meme.height 1.0
+
+
 scalewh : ( Int, Int ) -> ( Int, Int ) -> ScaleWH
 scalewh ( maxw, maxh ) ( w, h ) =
     let
@@ -1279,8 +1289,11 @@ center =
 view : Model -> Document Msg
 view model =
     let
-        ( memeHtml, scale ) =
-            renderMeme model
+        meme =
+            model.meme
+
+        scale =
+            scalewh ( model.maxWidth, model.maxHeight ) ( meme.width, meme.height )
     in
     { title = "ZAP Meme"
     , body =
@@ -1288,7 +1301,7 @@ view model =
             [ align "center" ]
             [ h2 [] [ text "ZAP Meme" ]
             , p []
-                [ memeHtml
+                [ renderMeme scale model
                 , ImageProperties.imageProperties
                     [ ImageProperties.imageId imageId
                     , ImageProperties.triggerImageProperties
@@ -1413,8 +1426,7 @@ renderInputs scale model =
                             ]
                         , td []
                             [ svg
-                                [ --style "display" "block"
-                                  style "margin" "auto"
+                                [ style "margin" "auto"
                                 , height <| ftos (2 * buttonSize - 2)
                                 , width <| ftos buttonSize
                                 ]
@@ -1850,8 +1862,8 @@ fontExample font =
         ]
 
 
-renderMeme : Model -> ( Html Msg, ScaleWH )
-renderMeme model =
+renderMeme : ScaleWH -> Model -> Html Msg
+renderMeme scale model =
     let
         meme =
             model.meme
@@ -1859,38 +1871,66 @@ renderMeme model =
         image =
             meme.image
 
-        scale =
-            scalewh ( model.maxWidth, model.maxHeight ) ( meme.width, meme.height )
+        wi =
+            scale.width
+
+        hi =
+            scale.height
+
+        selectedPosition =
+            model.selectedPosition
+
+        showCaptionBorders =
+            model.showCaptionBorders
+
+        fontDict =
+            model.fontDict
 
         w =
-            String.fromInt scale.width
+            String.fromInt wi
 
         h =
-            String.fromInt scale.height
+            String.fromInt hi
 
         url =
             meme.image.url
     in
-    ( svg
+    svg
         [ Svg.Attributes.id svgId
         , width w
         , height h
         ]
-      <|
+    <|
         List.concat
-            [ [ Svg.image
-                    [ Svg.Attributes.id imageId
-                    , width w
-                    , height h
-                    , xlinkHref url
-                    , Svg.Events.onClick <| SelectCaption Nothing
-                    ]
-                    []
-              ]
-            , List.map (renderCaption model scale) meme.captions
+            [ [ Svg.Lazy.lazy3 renderSvgImage wi hi url ]
+            , let
+                folder caption res =
+                    let
+                        svg =
+                            Svg.Lazy.lazy6 renderCaption
+                                wi
+                                hi
+                                selectedPosition
+                                showCaptionBorders
+                                fontDict
+                                caption
+                    in
+                    svg :: res
+              in
+              List.foldl folder [] meme.captions
             ]
-    , scale
-    )
+
+
+renderSvgImage : Int -> Int -> String -> Svg Msg
+renderSvgImage wi hi url =
+    Svg.image
+        [ Svg.Attributes.id imageId
+        , width <| tos wi
+        , height <| tos hi
+        , xlinkHref url
+        , Svg.Events.onClick <| SelectCaption Nothing
+        ]
+        []
 
 
 tos : Int -> String
@@ -1903,30 +1943,27 @@ ftos x =
     String.fromFloat x
 
 
-renderCaption : Model -> ScaleWH -> Caption -> Svg Msg
-renderCaption model scale caption =
+renderCaption : Int -> Int -> Maybe TextPosition -> Bool -> Dict String Font -> Caption -> Svg Msg
+renderCaption wi hi selectedPosition showCaptionBorders fontDict caption =
     let
-        meme =
-            model.meme
-
         isSelected =
-            Just caption.position == model.selectedPosition
+            Just caption.position == selectedPosition
 
         ( ( cx, cy ), ( cw, ch ) ) =
-            captionCoordinates caption scale.width scale.height
+            captionCoordinates caption wi hi
 
-        showCaptionBorders =
-            model.showCaptionBorders || isSelected
+        showBorders =
+            showCaptionBorders || isSelected
 
         alignment =
             alignmentToString caption.alignment
                 |> String.toLower
 
         font =
-            Maybe.withDefault defaultFont <| Dict.get caption.font model.fontDict
+            Maybe.withDefault defaultFont <| Dict.get caption.font fontDict
 
         fontsize =
-            round (caption.fontsize * toFloat scale.height / 100)
+            round (caption.fontsize * toFloat hi / 100)
 
         weight =
             if caption.bold then
@@ -1943,7 +1980,7 @@ renderCaption model scale caption =
                 "stroke:black;"
 
         outlineOpacity =
-            if showCaptionBorders then
+            if showBorders then
                 "stroke-opacity:1;"
 
             else
