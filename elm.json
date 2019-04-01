@@ -10,6 +10,7 @@
             "NoRedInk/elm-json-decode-pipeline": "1.0.0",
             "billstclair/elm-localstorage": "6.0.3",
             "billstclair/elm-port-funnel": "1.1.4",
+            "billstclair/elm-svg-button": "3.0.0",
             "cuducos/elm-format-number": "6.0.2",
             "elm/browser": "1.0.1",
             "elm/bytes": "1.0.8",

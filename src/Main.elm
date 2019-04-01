@@ -102,6 +102,7 @@ import Svg.Attributes
         , y1
         , y2
         )
+import Svg.Button as SB exposing (Button, Content(..))
 import Svg.Events
 import Task
 import Time
@@ -333,11 +334,17 @@ emptyMeme =
     }
 
 
+type ButtonOperation
+    = IncrementButton
+    | DecrementButton
+
+
 type alias Model =
     { meme : Meme
     , selectedPosition : Maybe TextPosition
     , deletedCaption : Maybe Caption
     , showCaptionBorders : Bool
+    , controller : Controller
     , inputs : Inputs
     , maxWidth : Int
     , maxHeight : Int
@@ -347,6 +354,9 @@ type alias Model =
     , triggerReturnedFile : Int
     , fileName : String
     , mimeType : String
+    , incrementButton : Button ()
+    , decrementButton : Button ()
+    , subscription : Maybe ( Float, SB.Msg, ButtonOperation )
     , fontDict : Dict String Font
     , key : Key
     , funnelState : PortFunnels.State
@@ -390,6 +400,68 @@ initialInputs =
     }
 
 
+type Controller
+    = MaxWidthController
+    | MaxHeightController
+    | FontHeightController
+    | CaptionWidthController
+    | CaptionHeightController
+
+
+currentCaptionAccessors : ( Caption -> Float, Float -> Caption -> Caption ) -> (Float -> Inputs -> Inputs) -> ( Model -> Float, Float -> Model -> Model )
+currentCaptionAccessors ( reader, writer ) inputsUpdater =
+    let
+        cr model =
+            case findCaption model.selectedPosition model.meme.captions of
+                Nothing ->
+                    0
+
+                Just c ->
+                    reader c
+
+        cw x model =
+            case findCaption model.selectedPosition model.meme.captions of
+                Nothing ->
+                    model
+
+                Just _ ->
+                    let
+                        inputs =
+                            model.inputs
+                    in
+                    { model
+                        | inputs = inputsUpdater x inputs
+                    }
+                        |> updateCaption (\c -> writer x c)
+    in
+    ( cr, cw )
+
+
+getControllerAccessors : Controller -> ( Model -> Float, Float -> Model -> Model )
+getControllerAccessors controller =
+    case controller of
+        MaxWidthController ->
+            ( .maxWidth >> toFloat, \x m -> { m | maxWidth = round x } )
+
+        MaxHeightController ->
+            ( .maxHeight >> toFloat, \x m -> { m | maxHeight = round x } )
+
+        FontHeightController ->
+            currentCaptionAccessors
+                ( .fontsize, \x c -> { c | fontsize = x } )
+                (\x c -> { c | fontsize = ftos x })
+
+        CaptionWidthController ->
+            currentCaptionAccessors
+                ( .width >> toFloat, \x c -> { c | width = round x } )
+                (\x c -> { c | width = tos <| round x })
+
+        CaptionHeightController ->
+            currentCaptionAccessors
+                ( .height >> toFloat, \x c -> { c | height = round x } )
+                (\x c -> { c | height = tos <| round x })
+
+
 type Msg
     = Noop
     | SelectCaption (Maybe TextPosition)
@@ -407,6 +479,8 @@ type Msg
     | ReceiveReturnedBytes Bytes
     | SetImageUrl String
     | SetMemeImageUrl
+    | SetController Controller Bool
+    | ButtonMsg SB.Msg ButtonOperation
     | SetMaxWidth String
     | SetMaxHeight String
     | SetPosition TextPosition
@@ -442,6 +516,12 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ PortFunnels.subscriptions ProcessLocalStorage model
+        , case model.subscription of
+            Nothing ->
+                Sub.none
+
+            Just ( time, m, operation ) ->
+                Time.every time (\_ -> ButtonMsg m operation)
         ]
 
 
@@ -450,12 +530,23 @@ localStoragePrefix =
     "elm-meme-maker"
 
 
+buttonSize : Float
+buttonSize =
+    40
+
+
+buttonPair : ( Float, Float )
+buttonPair =
+    ( buttonSize, buttonSize )
+
+
 init : Value -> Url -> Key -> ( Model, Cmd Msg )
 init flags url key =
     { meme = emptyMeme
     , deletedCaption = Nothing
     , selectedPosition = Nothing
     , showCaptionBorders = False
+    , controller = CaptionHeightController
     , inputs = initialInputs
     , maxWidth = 800
     , maxHeight = 600
@@ -465,6 +556,15 @@ init flags url key =
     , triggerReturnedFile = 0
     , fileName = "mime.jpg"
     , mimeType = "image/jpeg"
+    , incrementButton =
+        SB.repeatingButton SB.normalRepeatTime
+            buttonPair
+            ()
+    , decrementButton =
+        SB.repeatingButton SB.normalRepeatTime
+            buttonPair
+            ()
+    , subscription = Nothing
     , fontDict = safeFontDict
     , key = key
     , funnelState = PortFunnels.initialState localStoragePrefix
@@ -776,6 +876,56 @@ update msg model =
             }
                 |> withNoCmd
 
+        SetController controller checked ->
+            (if checked then
+                { model | controller = controller }
+
+             else
+                model
+            )
+                |> withNoCmd
+
+        ButtonMsg m operation ->
+            let
+                button =
+                    case operation of
+                        IncrementButton ->
+                            model.incrementButton
+
+                        DecrementButton ->
+                            model.decrementButton
+
+                wrapper =
+                    \bm -> ButtonMsg bm operation
+            in
+            case SB.checkSubscription m button of
+                Just ( time, m2 ) ->
+                    { model
+                        | subscription =
+                            if time <= 0 then
+                                Nothing
+
+                            else
+                                Just ( time, m2, operation )
+                    }
+                        |> withNoCmd
+
+                Nothing ->
+                    let
+                        ( isClick, btn, cmd ) =
+                            SB.update wrapper m button
+
+                        mdl =
+                            case operation of
+                                IncrementButton ->
+                                    { model | incrementButton = btn }
+
+                                DecrementButton ->
+                                    { model | decrementButton = btn }
+                    in
+                    buttonOperate isClick operation mdl
+                        |> withCmd cmd
+
         SetMaxWidth string ->
             { model
                 | maxWidth =
@@ -926,6 +1076,27 @@ update msg model =
 
                 Ok res ->
                     res
+
+
+buttonOperate : Bool -> ButtonOperation -> Model -> Model
+buttonOperate isClick operation model =
+    if not isClick then
+        model
+
+    else
+        let
+            ( reader, writer ) =
+                getControllerAccessors model.controller
+
+            increment =
+                case operation of
+                    IncrementButton ->
+                        1.0
+
+                    DecrementButton ->
+                        -1.0
+        in
+        writer (reader model + increment) model
 
 
 receiveImageUrl : String -> Model -> ( Model, Cmd Msg )
@@ -1101,6 +1272,10 @@ style_ string =
     Html.node "style" [ type_ "text/css" ] [ text string ]
 
 
+center =
+    Html.node "center"
+
+
 view : Model -> Document Msg
 view model =
     let
@@ -1164,13 +1339,18 @@ view model =
     }
 
 
-th : String -> Html msg
-th string =
+thm : List (Html msg) -> Html msg
+thm body =
     Html.th
         [ style "vertical-align" "top"
         , textalign "right"
         ]
-        [ text string ]
+        body
+
+
+th : String -> Html msg
+th string =
+    thm [ text string ]
 
 
 textalign : String -> Attribute msg
@@ -1192,6 +1372,17 @@ svgalign alignment =
                 "middle"
 
 
+controllerRadio : Controller -> Model -> Html Msg
+controllerRadio controller model =
+    input
+        [ type_ "radio"
+        , name "controller"
+        , onCheck <| SetController controller
+        , checked <| model.controller == controller
+        ]
+        []
+
+
 renderInputs : ScaleWH -> Model -> Html Msg
 renderInputs scale model =
     let
@@ -1200,19 +1391,45 @@ renderInputs scale model =
 
         isDisabled =
             model.selectedPosition == Nothing
+
+        meme =
+            model.meme
     in
     table []
         [ tr []
             [ td [ colspan 2 ]
-                [ textarea
-                    [ rows 3
-                    , cols 50
-                    , style "font-size" "20px"
-                    , onInput SetText
-                    , id "text"
-                    , value inputs.text
+                [ table []
+                    [ tr []
+                        [ td []
+                            [ textarea
+                                [ rows 3
+                                , cols 50
+                                , style "font-size" "20px"
+                                , onInput SetText
+                                , id "text"
+                                , value inputs.text
+                                ]
+                                []
+                            ]
+                        , td []
+                            [ svg
+                                [ --style "display" "block"
+                                  style "margin" "auto"
+                                , height <| ftos (2 * buttonSize - 2)
+                                , width <| ftos buttonSize
+                                ]
+                                [ SB.render ( 0, 0 )
+                                    (SB.TextContent "^")
+                                    (\m -> ButtonMsg m IncrementButton)
+                                    model.incrementButton
+                                , SB.render ( 0, buttonSize - 2 )
+                                    (SB.TextContent "v")
+                                    (\m -> ButtonMsg m DecrementButton)
+                                    model.decrementButton
+                                ]
+                            ]
+                        ]
                     ]
-                    []
                 ]
             ]
         , tr []
@@ -1236,12 +1453,11 @@ renderInputs scale model =
                 ]
             ]
         , tr []
-            [ th "Max Width:"
-            , let
-                meme =
-                    model.meme
-              in
-              td []
+            [ thm
+                [ controllerRadio MaxWidthController model
+                , text " Max Width:"
+                ]
+            , td []
                 [ input
                     [ type_ "text"
                     , size 5
@@ -1249,6 +1465,8 @@ renderInputs scale model =
                     , value <| tos model.maxWidth
                     ]
                     []
+                , text " "
+                , controllerRadio MaxHeightController model
                 , b " Height: "
                 , input
                     [ type_ "text"
@@ -1304,6 +1522,8 @@ renderInputs scale model =
             [ th "Font:"
             , td []
                 [ fontSelector isDisabled model
+                , text " "
+                , controllerRadio FontHeightController model
                 , b " Height: "
                 , input
                     [ type_ "text"
@@ -1367,7 +1587,10 @@ renderInputs scale model =
                 ]
             ]
         , tr []
-            [ th "Width:"
+            [ thm
+                [ controllerRadio CaptionWidthController model
+                , text " Width:"
+                ]
             , td []
                 [ input
                     [ type_ "text"
@@ -1378,8 +1601,9 @@ renderInputs scale model =
                     , value inputs.width
                     ]
                     []
-                , text "%"
-                , Html.b [] [ text " Height: " ]
+                , text "% "
+                , controllerRadio CaptionHeightController model
+                , b " Height: "
                 , input
                     [ type_ "text"
                     , disabled isDisabled
@@ -1672,6 +1896,11 @@ renderMeme model =
 tos : Int -> String
 tos int =
     String.fromInt int
+
+
+ftos : Float -> String
+ftos x =
+    String.fromFloat x
 
 
 renderCaption : Model -> ScaleWH -> Caption -> Svg Msg
