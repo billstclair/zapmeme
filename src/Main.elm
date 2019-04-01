@@ -90,6 +90,8 @@ import Svg.Attributes
         , height
         , stroke
         , strokeDasharray
+        , strokeWidth
+        , textAnchor
         , transform
         , width
         , x
@@ -300,7 +302,7 @@ sampleCaptions =
     [ { text = "I ask you<br>once again:"
       , position = TopCenter
       , alignment = Center
-      , font = "avant-garde"
+      , font = "impact"
       , fontsize = 10
       , fontcolor = "white"
       , outlineColor = Nothing
@@ -311,7 +313,7 @@ sampleCaptions =
     , { text = "Is this a pigeon?"
       , position = BottomCenter
       , alignment = Center
-      , font = "avant-garde"
+      , font = "impact"
       , fontsize = 10
       , fontcolor = "white"
       , outlineColor = Nothing
@@ -414,6 +416,7 @@ type Msg
     | SetFont String
     | SetFontSize String
     | SetFontColor String
+    | SetOutlineColor String
     | SetBold Bool
     | SetWidth String
     | SetHeight String
@@ -837,6 +840,35 @@ update msg model =
                         |> updateCaption (\c -> { c | fontcolor = string })
                         |> withNoCmd
 
+        SetOutlineColor string ->
+            let
+                color =
+                    if string == "none" || string == "" then
+                        inputs.outlineColor
+
+                    else
+                        string
+
+                isOutlined =
+                    string /= "none"
+
+                outlineColor =
+                    if isOutlined then
+                        Just color
+
+                    else
+                        Nothing
+            in
+            { model
+                | inputs =
+                    { inputs
+                        | outlineColor = color
+                        , isOutlined = isOutlined
+                    }
+            }
+                |> updateCaption (\c -> { c | outlineColor = outlineColor })
+                |> withNoCmd
+
         SetBold bold ->
             { model
                 | inputs =
@@ -1146,6 +1178,20 @@ textalign string =
     style "text-align" string
 
 
+svgalign : TextAlignment -> Svg.Attribute msg
+svgalign alignment =
+    textAnchor <|
+        case alignment of
+            Left ->
+                "start"
+
+            Right ->
+                "end"
+
+            Center ->
+                "middle"
+
+
 renderInputs : ScaleWH -> Model -> Html Msg
 renderInputs scale model =
     let
@@ -1274,7 +1320,7 @@ renderInputs scale model =
         , tr []
             [ th "Font Color:"
             , td []
-                [ colorSelector isDisabled inputs.fontcolor
+                [ colorSelector False False isDisabled inputs.fontcolor
                 , text " "
                 , input
                     [ type_ "text"
@@ -1284,6 +1330,40 @@ renderInputs scale model =
                     , value inputs.fontcolor
                     ]
                     []
+                ]
+            ]
+        , tr []
+            [ th "Outline Color:"
+            , let
+                isOutlined =
+                    inputs.isOutlined
+
+                color =
+                    if isOutlined then
+                        inputs.outlineColor
+
+                    else
+                        "none"
+              in
+              td []
+                [ colorSelector True (not isOutlined) isDisabled inputs.outlineColor
+                , text " "
+                , input
+                    [ type_ "text"
+                    , disabled (isDisabled || not isOutlined)
+                    , size 20
+                    , onInput SetOutlineColor
+                    , value color
+                    ]
+                    []
+                , if isOutlined then
+                    span []
+                        [ br
+                        , text "(not line-wrapped, use <br>)"
+                        ]
+
+                  else
+                    text ""
                 ]
             ]
         , tr []
@@ -1431,36 +1511,67 @@ colors =
     ]
 
 
-colorSelector : Bool -> String -> Html Msg
-colorSelector isDisabled color =
+colorSelector : Bool -> Bool -> Bool -> String -> Html Msg
+colorSelector includeNone isNone isDisabled color =
+    let
+        msg =
+            if includeNone then
+                SetOutlineColor
+
+            else
+                SetFontColor
+
+        currentNone =
+            if isNone then
+                "none"
+
+            else
+                ""
+
+        isCustom =
+            not isNone
+                && (not <| List.member color colors)
+
+        opts =
+            customColorOption isCustom color
+                :: List.map
+                    (colorOption isNone color)
+                    colors
+
+        options =
+            if includeNone then
+                colorOption False currentNone "none"
+                    :: opts
+
+            else
+                opts
+    in
     select
         [ disabled isDisabled
-        , onInput SetFontColor
+        , onInput msg
         ]
     <|
-        customColorOption color
-            :: List.map
-                (colorOption color)
-                colors
+        options
 
 
-customColorOption : String -> Html Msg
-customColorOption currentColor =
+customColorOption : Bool -> String -> Html Msg
+customColorOption isSelected currentColor =
     let
         isCustom =
             not <| List.member currentColor colors
     in
     option
-        [ selected isCustom
+        [ selected isSelected
         , value ""
+        , disabled (not isCustom && not isSelected)
         ]
         [ text "Custom" ]
 
 
-colorOption : String -> String -> Html Msg
-colorOption currentColor color =
+colorOption : Bool -> String -> String -> Html Msg
+colorOption isNone currentColor color =
     option
-        [ selected <| currentColor == color
+        [ selected <| not isNone && (currentColor == color)
         , value color
         ]
         [ text color ]
@@ -1595,14 +1706,14 @@ renderCaption model scale caption =
             else
                 "normal"
 
-        stroke =
+        outline =
             if isSelected then
                 "stroke:red;"
 
             else
                 "stroke:black;"
 
-        strokeOpacity =
+        outlineOpacity =
             if showCaptionBorders then
                 "stroke-opacity:1;"
 
@@ -1617,25 +1728,72 @@ renderCaption model scale caption =
                 "2,2"
 
         rectStyle =
-            "fill-opacity:0;stroke-width:2;" ++ stroke ++ strokeOpacity
+            "fill-opacity:0;stroke-width:2;" ++ outline ++ outlineOpacity
     in
     Svg.g []
-        [ foreignObject
-            [ x (tos cx)
-            , y (tos cy)
-            , width (tos cw)
-            , height (tos ch)
-            ]
-            [ div
-                [ textalign alignment
-                , fontAttribute font
-                , style "font-size" <| tos fontsize ++ "px"
-                , style "color" caption.fontcolor
-                , style "font-weight" weight
-                ]
-              <|
-                splitLines caption.text
-            ]
+        [ case caption.outlineColor of
+            Nothing ->
+                foreignObject
+                    [ x (tos cx)
+                    , y (tos cy)
+                    , width (tos cw)
+                    , height (tos ch)
+                    ]
+                    [ div
+                        [ textalign alignment
+                        , fontAttribute font
+                        , style "font-size" <| tos fontsize ++ "px"
+                        , style "color" caption.fontcolor
+                        , style "font-weight" weight
+                        ]
+                      <|
+                        splitLines caption.text
+                    ]
+
+            Just outlineColor ->
+                let
+                    tx =
+                        case caption.alignment of
+                            Left ->
+                                cx
+
+                            Center ->
+                                cx + cw // 2
+
+                            Right ->
+                                cx + cw
+
+                    lines =
+                        String.split "<br>" caption.text
+
+                    max =
+                        List.length lines - 1
+
+                    -- This varies by font. Not doing that yet.
+                    lineheight =
+                        round (1.2 * toFloat fontsize)
+
+                    ys =
+                        List.map ((*) lineheight) (List.range 0 max)
+                in
+                g
+                    [ transform
+                        ("translate(" ++ tos tx ++ " " ++ (tos <| cy + fontsize) ++ ")")
+                    , fontAttribute font
+                    , style "font-size" <| tos fontsize ++ "px"
+                    , fill caption.fontcolor
+                    , stroke outlineColor
+                    , strokeWidth "1"
+                    , svgalign caption.alignment
+                    ]
+                <|
+                    List.map2
+                        (\txt ty ->
+                            Svg.text_ [ y <| tos ty ]
+                                [ Svg.text txt ]
+                        )
+                        lines
+                        ys
         , rect
             [ x (tos cx)
             , y (tos cy)
