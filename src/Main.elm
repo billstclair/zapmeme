@@ -80,6 +80,7 @@ import Html.Events exposing (on, onCheck, onClick, onInput)
 import Json.Decode as JD exposing (Decoder, Value)
 import Json.Encode as JE
 import List.Extra as LE
+import Markdown
 import PortFunnel.LocalStorage as LocalStorage
 import PortFunnels exposing (FunnelDict, Handler(..))
 import Svg exposing (Svg, foreignObject, g, line, rect, svg)
@@ -357,6 +358,7 @@ type alias Model =
     , mimeType : String
     , incrementButton : Button ()
     , decrementButton : Button ()
+    , showHelp : Bool
     , subscription : Maybe Subscription
     , fontDict : Dict String Font
     , key : Key
@@ -479,6 +481,7 @@ type Msg
     | AddCaption
     | DeleteCaption
     | UndoDeletion
+    | ToggleHelp
     | SetShowCaptionBorders Bool
     | SetText String
     | SelectImageFile
@@ -584,6 +587,7 @@ init flags url key =
         SB.repeatingButton repeatTime
             buttonPair
             ()
+    , showHelp = False
     , subscription = Nothing
     , fontDict = safeFontDict
     , key = key
@@ -591,7 +595,7 @@ init flags url key =
     , msg = Nothing
     }
         |> withCmd
-            -- Need to do this so we compute the size
+            -- Need to do this so we compute the size at startup
             (Task.perform ReceiveImageUrl <|
                 Task.succeed initialImage.url
             )
@@ -826,6 +830,10 @@ update msg model =
 
         UndoDeletion ->
             undoDeletion model
+
+        ToggleHelp ->
+            { model | showHelp = not model.showHelp }
+                |> withNoCmd
 
         SelectCaption position ->
             selectCaption position model
@@ -1409,6 +1417,21 @@ view model =
                             [ text "Undo Deletion" ]
                 , renderInputs scale model
                 ]
+            , button
+                [ onClick ToggleHelp
+                ]
+                [ text <|
+                    if model.showHelp then
+                        "Hide Help"
+
+                    else
+                        "Show Help"
+                ]
+            , if model.showHelp then
+                helpParagraph
+
+              else
+                text ""
             , fontParagraph
             , p []
                 [ text <| chars.copyright ++ " 2019 Bill St. Clair"
@@ -1923,6 +1946,70 @@ fontOption currentFont font =
         [ span [ fontAttribute font ]
             [ text font.font ]
         ]
+
+
+helpParagraph : Html msg
+helpParagraph =
+    Markdown.toHtml
+        [ style "width" "60%"
+        , style "text-align" "left"
+        ]
+        """
+You will usually want to choose an image other than the default from the
+"Background" section. "Max Width" and its "Height" are the maximum
+background image size, in pixels. The image will be scaled to fit. The
+"JPEG" and "PNG" download buttons will save to you computer an image
+of the completed meme in "File Name", with suitable extension.
+
+To add a new caption, click "Add Caption". This will use the text in
+the text input area, just below the "Add Caption" button, a new
+"Position", not occupied by any existing captions, and the other
+settings below "Selected Caption".
+
+To change an existing caption, click on it. It will be outlined with a
+red, dashed line, and the editing controls will be enabled. To delete
+the selected caption, click "Delete Caption" (which is not there
+unless a caption is selected). You can undo that, but only until you
+select or add another caption.
+
+Typing in the text input area, right below the meme, changes the
+caption's text. It will be auto-wrapped, unless you choose an "Outline
+Color" (which I will fix soon). To insert an explicit line break,
+enter "<br>".
+
+"Width" and "Height" change the size of the outlined area. They are
+represented in percentages of the background image width and height.
+The easiest way to change any numeric field, is to click the radio
+button beside it, and click the up or down array to the right of the
+text input area. Those arrow buttons will repeat if you hold them
+down.
+
+"Position" lets you select one of nine positions for a caption.
+
+"Alignment" controls where in the outlined rectangle the text will appear.
+
+If "Bold" is checked, most, but not all fonts, will look thicker.
+
+"Font" is one of a selection of safe web fonts, which usually work in
+any browser. I plan to extend this, enabling fonts from Google and
+others, and allowing you to show a subset of the available fonts, if
+you don't expect to use some of them.
+
+"Height" is the height of the font, in percentage of the image
+height. The arrow buttons change this by 1, but you can type a single
+decimal digit, if you need fine tuning (e.g. "7.5").
+
+"Font Color" provides a list of choices, but you can type any HTML
+font in the text area to its right. E.g. "#8f0" for a bright green (a
+little red mixed in).
+
+If you choose an "Outline Color", the text will stand out better from
+the background image. Again, you may enter a custom color.
+
+Next feature: Save the current meme, and allow saving of multiple
+other memes and "Selected Caption" settings, named as you like to help
+you remember them.
+         """
 
 
 fontParagraph : Html msg

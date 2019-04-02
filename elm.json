@@ -21,7 +21,8 @@
             "elm/svg": "1.0.1",
             "elm/time": "1.0.0",
             "elm/url": "1.0.0",
-            "elm-community/list-extra": "8.2.0"
+            "elm-community/list-extra": "8.2.0",
+            "elm-explorations/markdown": "1.0.0"
         },
         "indirect": {
             "elm/virtual-dom": "1.0.2",
