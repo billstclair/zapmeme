@@ -2004,7 +2004,8 @@ font in the text area to its right. E.g. "#8f0" for a bright green (a
 little red mixed in).
 
 If you choose an "Outline Color", the text will stand out better from
-the background image. Again, you may enter a custom color.
+the background image. Again, you may enter a custom color. I find
+"impact" and "arial-black" to be the best-looking outlined fonts.
 
 Next feature: Save the current meme, and allow saving of multiple
 other memes and "Selected Caption" settings, named as you like to help
