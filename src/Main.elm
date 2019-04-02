@@ -106,7 +106,7 @@ import Svg.Button as SB exposing (Button, Content(..))
 import Svg.Events
 import Svg.Lazy
 import Task
-import Time
+import Time exposing (Posix)
 import Url exposing (Url)
 import ZapMeme.Data exposing (data)
 import ZapMeme.EncodeDecode as ED
@@ -357,7 +357,7 @@ type alias Model =
     , mimeType : String
     , incrementButton : Button ()
     , decrementButton : Button ()
-    , subscription : Maybe ( Float, SB.Msg, ButtonOperation )
+    , subscription : Maybe ( Int, SB.Msg, ButtonOperation )
     , fontDict : Dict String Font
     , key : Key
     , funnelState : PortFunnels.State
@@ -465,6 +465,8 @@ getControllerAccessors controller =
 
 type Msg
     = Noop
+    | InitialDelay Posix
+    | Tick Posix
     | SelectCaption (Maybe TextPosition)
     | AddCaption
     | DeleteCaption
@@ -513,15 +515,24 @@ main =
         }
 
 
+shortRepeatTimeDelay : Float
+shortRepeatTimeDelay =
+    100
+
+
+
+-- This is the default, but I want to be explicit
+
+
+repeatTime : SB.RepeatTime
+repeatTime =
+    SB.RepeatTimeWithInitialDelay 500 shortRepeatTimeDelay
+
+
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
-        [ case Debug.log "subscriptions" model.subscription of
-            Nothing ->
-                Sub.none
-
-            Just ( time, m, operation ) ->
-                Time.every time (\_ -> ButtonMsg m operation)
+        [ Time.every shortRepeatTimeDelay Tick
         , PortFunnels.subscriptions ProcessLocalStorage model
         ]
 
@@ -558,11 +569,11 @@ init flags url key =
     , fileName = "mime.jpg"
     , mimeType = "image/jpeg"
     , incrementButton =
-        SB.repeatingButton SB.normalRepeatTime
+        SB.repeatingButton repeatTime
             buttonPair
             ()
     , decrementButton =
-        SB.repeatingButton SB.normalRepeatTime
+        SB.repeatingButton repeatTime
             buttonPair
             ()
     , subscription = Nothing
@@ -767,6 +778,36 @@ update msg model =
         Noop ->
             model |> withNoCmd
 
+        InitialDelay posix ->
+            case model.subscription of
+                Nothing ->
+                    model |> withNoCmd
+
+                Just ( time, m, operation ) ->
+                    { model
+                        | subscription =
+                            Just
+                                ( time + Time.posixToMillis posix
+                                , m
+                                , operation
+                                )
+                    }
+                        |> withNoCmd
+
+        Tick posix ->
+            case model.subscription of
+                Nothing ->
+                    model |> withNoCmd
+
+                Just ( millis, m, operation ) ->
+                    if millis <= Time.posixToMillis posix then
+                        ( model
+                        , Task.perform (ButtonMsg m) <| Task.succeed operation
+                        )
+
+                    else
+                        model |> withNoCmd
+
         AddCaption ->
             addCaption model
 
@@ -886,6 +927,7 @@ update msg model =
             )
                 |> withNoCmd
 
+        -- Process a msg for Svg.Button
         ButtonMsg m operation ->
             let
                 button =
@@ -901,15 +943,25 @@ update msg model =
             in
             case SB.checkSubscription (Debug.log "checkSubscription" m) button of
                 Just ( time, m2 ) ->
-                    { model
-                        | subscription =
+                    let
+                        ( subscription, cmd ) =
                             if time <= 0 then
-                                Nothing
+                                ( Nothing, Cmd.none )
+
+                            else if time == shortRepeatTimeDelay then
+                                ( Just ( 0, m2, operation )
+                                , Cmd.none
+                                )
 
                             else
-                                Just ( time, m2, operation )
+                                ( Just ( round time, m2, operation )
+                                , Task.perform InitialDelay Time.now
+                                )
+                    in
+                    { model
+                        | subscription = subscription
                     }
-                        |> withNoCmd
+                        |> withCmd cmd
 
                 Nothing ->
                     let
@@ -1385,11 +1437,12 @@ svgalign alignment =
                 "middle"
 
 
-controllerRadio : Controller -> Model -> Html Msg
-controllerRadio controller model =
+controllerRadio : Bool -> Controller -> Model -> Html Msg
+controllerRadio isDisabled controller model =
     input
         [ type_ "radio"
         , name "controller"
+        , disabled isDisabled
         , onCheck <| SetController controller
         , checked <| model.controller == controller
         ]
@@ -1445,62 +1498,40 @@ renderInputs scale model =
                 ]
             ]
         , tr []
-            [ th "Image:"
-            , td []
-                [ button [ onClick <| ReceiveImageUrl initialImage.url ]
-                    [ text "Use Default" ]
-                , text " "
-                , button [ onClick SelectImageFile ]
-                    [ text "Choose File" ]
-                , br
-                , input
-                    [ type_ "text"
-                    , size 20
-                    , onInput SetImageUrl
-                    , value inputs.imageUrl
-                    ]
-                    []
-                , button [ onClick SetMemeImageUrl ]
-                    [ text "Use URL" ]
+            [ td
+                [ colspan 2
+                , style "text-align" "center"
                 ]
+                [ b "Selected Caption" ]
             ]
         , tr []
             [ thm
-                [ controllerRadio MaxWidthController model
-                , text " Max Width:"
+                [ controllerRadio isDisabled CaptionWidthController model
+                , text " Width:"
                 ]
             , td []
                 [ input
                     [ type_ "text"
-                    , size 5
-                    , onInput SetMaxWidth
-                    , value <| tos model.maxWidth
+                    , disabled isDisabled
+                    , textalign "right"
+                    , size 3
+                    , onInput SetWidth
+                    , value inputs.width
                     ]
                     []
-                , text " "
-                , controllerRadio MaxHeightController model
+                , text "% "
+                , controllerRadio isDisabled CaptionHeightController model
                 , b " Height: "
                 , input
                     [ type_ "text"
-                    , size 5
-                    , onInput SetMaxHeight
-                    , value <| tos model.maxHeight
+                    , disabled isDisabled
+                    , textalign "right"
+                    , size 3
+                    , onInput SetHeight
+                    , value inputs.height
                     ]
                     []
-                , br
-                , span [ style "font-size" "80%" ]
-                    [ text "("
-                    , text <| tos meme.width
-                    , text " x "
-                    , text <| tos meme.height
-                    , text ") * "
-                    , text <| format usLocale scale.scale
-                    , text " = ("
-                    , text <| tos scale.width
-                    , text " x "
-                    , text <| tos scale.height
-                    , text ")"
-                    ]
+                , text "%"
                 ]
             ]
         , tr []
@@ -1535,7 +1566,7 @@ renderInputs scale model =
             , td []
                 [ fontSelector isDisabled model
                 , text " "
-                , controllerRadio FontHeightController model
+                , controllerRadio isDisabled FontHeightController model
                 , b " Height: "
                 , input
                     [ type_ "text"
@@ -1599,33 +1630,69 @@ renderInputs scale model =
                 ]
             ]
         , tr []
+            [ td
+                [ colspan 2
+                , style "text-align" "center"
+                ]
+                [ b "Background" ]
+            ]
+        , tr []
+            [ th "Image:"
+            , td []
+                [ button [ onClick <| ReceiveImageUrl initialImage.url ]
+                    [ text "Use Default" ]
+                , text " "
+                , button [ onClick SelectImageFile ]
+                    [ text "Choose File" ]
+                , br
+                , input
+                    [ type_ "text"
+                    , size 20
+                    , onInput SetImageUrl
+                    , value inputs.imageUrl
+                    ]
+                    []
+                , button [ onClick SetMemeImageUrl ]
+                    [ text "Use URL" ]
+                ]
+            ]
+        , tr []
             [ thm
-                [ controllerRadio CaptionWidthController model
-                , text " Width:"
+                [ controllerRadio False MaxWidthController model
+                , text " Max Width:"
                 ]
             , td []
                 [ input
                     [ type_ "text"
-                    , disabled isDisabled
-                    , textalign "right"
-                    , size 3
-                    , onInput SetWidth
-                    , value inputs.width
+                    , size 5
+                    , onInput SetMaxWidth
+                    , value <| tos model.maxWidth
                     ]
                     []
-                , text "% "
-                , controllerRadio CaptionHeightController model
+                , text " "
+                , controllerRadio False MaxHeightController model
                 , b " Height: "
                 , input
                     [ type_ "text"
-                    , disabled isDisabled
-                    , textalign "right"
-                    , size 3
-                    , onInput SetHeight
-                    , value inputs.height
+                    , size 5
+                    , onInput SetMaxHeight
+                    , value <| tos model.maxHeight
                     ]
                     []
-                , text "%"
+                , br
+                , span [ style "font-size" "80%" ]
+                    [ text "("
+                    , text <| tos meme.width
+                    , text " x "
+                    , text <| tos meme.height
+                    , text ") * "
+                    , text <| format usLocale scale.scale
+                    , text " = ("
+                    , text <| tos scale.width
+                    , text " x "
+                    , text <| tos scale.height
+                    , text ")"
+                    ]
                 ]
             ]
         , tr []
