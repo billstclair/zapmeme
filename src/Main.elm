@@ -357,11 +357,19 @@ type alias Model =
     , mimeType : String
     , incrementButton : Button ()
     , decrementButton : Button ()
-    , subscription : Maybe ( Int, SB.Msg, ButtonOperation )
+    , subscription : Maybe Subscription
     , fontDict : Dict String Font
     , key : Key
     , funnelState : PortFunnels.State
     , msg : Maybe String
+    }
+
+
+type alias Subscription =
+    { delay : Int
+    , millis : Int
+    , buttonMsg : SB.Msg
+    , operation : ButtonOperation
     }
 
 
@@ -783,14 +791,15 @@ update msg model =
                 Nothing ->
                     model |> withNoCmd
 
-                Just ( time, m, operation ) ->
+                Just subscription ->
                     { model
                         | subscription =
                             Just
-                                ( time + Time.posixToMillis posix
-                                , m
-                                , operation
-                                )
+                                { subscription
+                                    | millis =
+                                        subscription.delay
+                                            + Time.posixToMillis posix
+                                }
                     }
                         |> withNoCmd
 
@@ -799,10 +808,11 @@ update msg model =
                 Nothing ->
                     model |> withNoCmd
 
-                Just ( millis, m, operation ) ->
-                    if millis <= Time.posixToMillis posix then
+                Just { millis, buttonMsg, operation } ->
+                    if millis >= 0 && millis <= Time.posixToMillis posix then
                         ( model
-                        , Task.perform (ButtonMsg m) <| Task.succeed operation
+                        , Task.perform (ButtonMsg buttonMsg) <|
+                            Task.succeed operation
                         )
 
                     else
@@ -949,12 +959,22 @@ update msg model =
                                 ( Nothing, Cmd.none )
 
                             else if time == shortRepeatTimeDelay then
-                                ( Just ( 0, m2, operation )
+                                ( Just
+                                    { delay = 0
+                                    , millis = 0
+                                    , buttonMsg = m2
+                                    , operation = operation
+                                    }
                                 , Cmd.none
                                 )
 
                             else
-                                ( Just ( round time, m2, operation )
+                                ( Just
+                                    { delay = round time
+                                    , millis = -1
+                                    , buttonMsg = m2
+                                    , operation = operation
+                                    }
                                 , Task.perform InitialDelay Time.now
                                 )
                     in
