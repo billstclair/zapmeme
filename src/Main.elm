@@ -301,6 +301,7 @@ captionCoordinates caption totalWidth totalHeight =
 
 initialImage =
     { url = data.pigeon
+    , hash = MD5.hex data.pigeon
     }
 
 
@@ -999,7 +1000,10 @@ updateInternal msg model =
                 | meme =
                     { meme
                         | image =
-                            { image | url = inputs.imageUrl }
+                            { image
+                                | url = inputs.imageUrl
+                                , hash = MD5.hex inputs.imageUrl
+                            }
                     }
             }
                 |> withNoCmd
@@ -1269,7 +1273,11 @@ receiveImageUrl url model =
     { model
         | meme =
             { meme
-                | image = { image | url = url }
+                | image =
+                    { image
+                        | url = url
+                        , hash = MD5.hex url
+                    }
             }
         , triggerImageProperties = model.triggerImageProperties + 1
     }
@@ -2501,7 +2509,7 @@ putMeme meme model =
             image.url
 
         urlHash =
-            MD5.hex url
+            image.hash
 
         value =
             ED.encodeMeme

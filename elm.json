@@ -23,7 +23,6 @@
             "elm/url": "1.0.0",
             "elm-community/list-extra": "8.2.0",
             "elm-explorations/markdown": "1.0.0",
-            "ktonon/elm-crypto": "1.1.2",
             "truqu/elm-md5": "1.1.0"
         },
         "indirect": {

@@ -18,10 +18,10 @@ module ZapMeme.EncodeDecode exposing
     , memeDecoder
     )
 
-import Crypto.Hash exposing (sha256)
 import Json.Decode as JD exposing (Decoder)
 import Json.Decode.Pipeline exposing (hardcoded, optional, required)
 import Json.Encode as JE exposing (Value)
+import MD5
 import ZapMeme.Types
     exposing
         ( Caption
@@ -66,7 +66,10 @@ encodeImage image =
 
 imageDecoder : Decoder Image
 imageDecoder =
-    JD.map Image
+    JD.map
+        (\url ->
+            Image url (MD5.hex url)
+        )
         (JD.field "url" JD.string)
 
 

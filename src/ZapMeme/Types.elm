@@ -80,6 +80,7 @@ type alias Inputs =
 -}
 type alias Image =
     { url : String
+    , hash : String
     }
 
 
