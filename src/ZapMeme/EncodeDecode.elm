@@ -10,8 +10,15 @@
 ----------------------------------------------------------------------
 
 
-module ZapMeme.EncodeDecode exposing (decodeMeme, encodeMeme, memeDecoder)
+module ZapMeme.EncodeDecode exposing
+    ( decodeMeme
+    , decodeSavedModel
+    , encodeMeme
+    , encodeSavedModel
+    , memeDecoder
+    )
 
+import Crypto.Hash exposing (sha256)
 import Json.Decode as JD exposing (Decoder)
 import Json.Decode.Pipeline exposing (hardcoded, optional, required)
 import Json.Encode as JE exposing (Value)
@@ -19,7 +26,9 @@ import ZapMeme.Types
     exposing
         ( Caption
         , Image
+        , Inputs
         , Meme
+        , SavedModel
         , TextAlignment(..)
         , TextPosition(..)
         )
@@ -43,6 +52,7 @@ decodeMeme value =
 memeDecoder : Decoder Meme
 memeDecoder =
     JD.map4 Meme
+        --hash needs to be looked up
         (JD.field "image" imageDecoder)
         (JD.field "captions" <| JD.list captionDecoder)
         (JD.field "height" JD.int)
@@ -218,3 +228,83 @@ textAlignmentHelp s =
 
         _ ->
             JD.fail <| "Unknown TextAlignment: " ++ s
+
+
+encodeSavedModel : SavedModel -> Value
+encodeSavedModel model =
+    JE.object
+        [ ( "selectedPosition"
+          , case model.selectedPosition of
+                Nothing ->
+                    JE.null
+
+                Just position ->
+                    encodeTextPosition position
+          )
+        , ( "showCaptionBorders", JE.bool model.showCaptionBorders )
+        , ( "maxWidth", JE.int model.maxWidth )
+        , ( "maxHeight", JE.int model.maxHeight )
+        , ( "inputs", encodeInputs model.inputs )
+        , ( "showHelp", JE.bool model.showHelp )
+        ]
+
+
+decodeSavedModel : Value -> Result JD.Error SavedModel
+decodeSavedModel value =
+    JD.decodeValue savedModelDecoder value
+
+
+savedModelDecoder : Decoder SavedModel
+savedModelDecoder =
+    JD.succeed SavedModel
+        |> required "selectedPosition" (JD.nullable textPositionDecoder)
+        |> required "showCaptionBorders" JD.bool
+        |> required "maxWidth" JD.int
+        |> required "maxHeight" JD.int
+        |> required "inputs" inputsDecoder
+        |> required "showHelp" JD.bool
+
+
+encodeInputs : Inputs -> Value
+encodeInputs inputs =
+    let
+        imageUrl =
+            if String.startsWith "data:" inputs.imageUrl then
+                ""
+
+            else
+                inputs.imageUrl
+    in
+    JE.object
+        [ ( "text", JE.string inputs.text )
+        , ( "imageUrl", JE.string imageUrl )
+        , ( "position", encodeTextPosition inputs.position )
+        , ( "alignment", encodeTextAlignment inputs.alignment )
+        , ( "font", JE.string inputs.font )
+        , ( "fontsize", JE.string inputs.fontsize )
+        , ( "fontcolor", JE.string inputs.fontcolor )
+        , ( "isOutlined", JE.bool inputs.isOutlined )
+        , ( "outlineColor", JE.string inputs.outlineColor )
+        , ( "bold", JE.bool inputs.bold )
+        , ( "width", JE.string inputs.width )
+        , ( "height", JE.string inputs.height )
+        , ( "fileName", JE.string inputs.fileName )
+        ]
+
+
+inputsDecoder : Decoder Inputs
+inputsDecoder =
+    JD.succeed Inputs
+        |> required "text" JD.string
+        |> required "imageUrl" JD.string
+        |> required "position" textPositionDecoder
+        |> required "alignment" textAlignmentDecoder
+        |> required "font" JD.string
+        |> required "fontsize" JD.string
+        |> required "fontcolor" JD.string
+        |> required "isOutlined" JD.bool
+        |> required "outlineColor" JD.string
+        |> required "bold" JD.bool
+        |> required "width" JD.string
+        |> required "height" JD.string
+        |> required "fileName" JD.string

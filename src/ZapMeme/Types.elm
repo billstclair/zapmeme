@@ -14,7 +14,9 @@ module ZapMeme.Types exposing
     ( Caption
     , Font
     , Image
+    , Inputs
     , Meme
+    , SavedModel
     , TextAlignment(..)
     , TextPosition(..)
     )
@@ -56,6 +58,24 @@ type alias Caption =
     }
 
 
+type alias Inputs =
+    { -- For the selected caption
+      text : String
+    , imageUrl : String
+    , position : TextPosition
+    , alignment : TextAlignment
+    , font : String
+    , fontsize : String
+    , fontcolor : String
+    , isOutlined : Bool
+    , outlineColor : String
+    , bold : Bool
+    , width : String
+    , height : String
+    , fileName : String
+    }
+
+
 {-| Packaged as a type, since it may change.
 -}
 type alias Image =
@@ -74,4 +94,19 @@ type alias Meme =
 type alias Font =
     { font : String
     , family : String
+    }
+
+
+{-| This does not include the current meme.
+
+That's saved as the "meme" key.
+
+-}
+type alias SavedModel =
+    { selectedPosition : Maybe TextPosition
+    , showCaptionBorders : Bool
+    , maxWidth : Int
+    , maxHeight : Int
+    , inputs : Inputs
+    , showHelp : Bool
     }

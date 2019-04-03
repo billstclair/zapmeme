@@ -80,9 +80,11 @@ import Html.Events exposing (on, onCheck, onClick, onInput)
 import Json.Decode as JD exposing (Decoder, Value)
 import Json.Encode as JE
 import List.Extra as LE
+import MD5
 import Markdown
 import PortFunnel.LocalStorage as LocalStorage
 import PortFunnels exposing (FunnelDict, Handler(..))
+import Set exposing (Set)
 import Svg exposing (Svg, foreignObject, g, line, rect, svg)
 import Svg.Attributes
     exposing
@@ -116,7 +118,9 @@ import ZapMeme.Types
         ( Caption
         , Font
         , Image
+        , Inputs
         , Meme
+        , SavedModel
         , TextAlignment(..)
         , TextPosition(..)
         )
@@ -344,24 +348,28 @@ type ButtonOperation
 type alias Model =
     { meme : Meme
     , selectedPosition : Maybe TextPosition
-    , deletedCaption : Maybe Caption
     , showCaptionBorders : Bool
-    , controller : Controller
-    , inputs : Inputs
     , maxWidth : Int
     , maxHeight : Int
+    , fileName : String
+    , inputs : Inputs
+    , showHelp : Bool
+
+    -- Below here is not persistent.
+    , deletedCaption : Maybe Caption
+    , controller : Controller
     , file : Maybe File
     , triggerImageProperties : Int
     , downloadFile : Maybe File
     , triggerReturnedFile : Int
-    , fileName : String
     , mimeType : String
     , incrementButton : Button ()
     , decrementButton : Button ()
-    , showHelp : Bool
     , subscription : Maybe Subscription
     , fontDict : Dict String Font
     , key : Key
+    , receiveImagesHandler : Maybe (String -> Maybe Value -> Cmd Msg)
+    , knownImages : Set String
     , funnelState : PortFunnels.State
     , msg : Maybe String
     }
@@ -372,24 +380,6 @@ type alias Subscription =
     , millis : Int
     , buttonMsg : SB.Msg
     , operation : ButtonOperation
-    }
-
-
-type alias Inputs =
-    { -- For the selected caption
-      text : String
-    , imageUrl : String
-    , position : TextPosition
-    , alignment : TextAlignment
-    , font : String
-    , fontsize : String
-    , fontcolor : String
-    , isOutlined : Bool
-    , outlineColor : String
-    , bold : Bool
-    , width : String
-    , height : String
-    , fileName : String
     }
 
 
@@ -510,6 +500,10 @@ type Msg
     | SetHeight String
     | SetFileName String
     | StartDownload String String
+    | MaybePutImageUrl String String
+    | ImageExists String
+    | PutImageUrl String String
+    | ReceiveImagesKey String (Maybe Value)
     | HandleUrlRequest UrlRequest
     | HandleUrlChange Url
     | ProcessLocalStorage Value
@@ -548,11 +542,6 @@ subscriptions model =
         ]
 
 
-localStoragePrefix : String
-localStoragePrefix =
-    "elm-meme-maker"
-
-
 buttonSize : Float
 buttonSize =
     40
@@ -577,7 +566,7 @@ init flags url key =
     , triggerImageProperties = 0
     , downloadFile = Nothing
     , triggerReturnedFile = 0
-    , fileName = "mime.jpg"
+    , fileName = "meme.jpg"
     , mimeType = "image/jpeg"
     , incrementButton =
         SB.repeatingButton repeatTime
@@ -591,6 +580,8 @@ init flags url key =
     , subscription = Nothing
     , fontDict = safeFontDict
     , key = key
+    , receiveImagesHandler = Nothing
+    , knownImages = Set.empty
     , funnelState = PortFunnels.initialState localStoragePrefix
     , msg = Nothing
     }
@@ -783,6 +774,37 @@ undoDeletion model =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     let
+        ( mdl, cmd ) =
+            updateInternal msg model
+
+        doit =
+            case msg of
+                MaybePutImageUrl _ _ ->
+                    False
+
+                PutImageUrl _ _ ->
+                    False
+
+                ImageExists _ ->
+                    False
+
+                _ ->
+                    modelToSavedModel mdl /= modelToSavedModel model
+    in
+    mdl
+        |> withCmds
+            [ cmd
+            , if doit then
+                putModel mdl
+
+              else
+                Cmd.none
+            ]
+
+
+updateInternal : Msg -> Model -> ( Model, Cmd Msg )
+updateInternal msg model =
+    let
         inputs =
             model.inputs
     in
@@ -885,6 +907,52 @@ update msg model =
             }
                 |> withCmd (Task.perform (\_ -> GetReturnedFile) Time.now)
 
+        MaybePutImageUrl hash url ->
+            if Set.member hash model.knownImages then
+                model |> withNoCmd
+
+            else
+                let
+                    flagKey =
+                        Debug.log "MaybePutImageUrl" <|
+                            encodeSubkey persistenceKeys.images hash
+                in
+                { model | receiveImagesHandler = Just <| receivePutImageImages url }
+                    |> withCmd (get flagKey model)
+
+        ImageExists hash ->
+            { model
+                | knownImages = Set.insert hash model.knownImages
+            }
+                |> withNoCmd
+
+        PutImageUrl hash url ->
+            let
+                flagKey =
+                    encodeSubkey persistenceKeys.images hash
+
+                key =
+                    Debug.log "PutImageUrl" <|
+                        encodeSubkey persistenceKeys.imageurls hash
+            in
+            { model
+                | knownImages = Set.insert hash model.knownImages
+            }
+                |> withCmds
+                    [ put flagKey (Just <| JE.bool True) model
+                    , put key (Just <| JE.string url) model
+                    ]
+
+        ReceiveImagesKey hash value ->
+            case model.receiveImagesHandler of
+                Nothing ->
+                    model |> withNoCmd
+
+                Just handler ->
+                    ( { model | receiveImagesHandler = Nothing }
+                    , handler hash value
+                    )
+
         GetReturnedFile ->
             { model | triggerReturnedFile = model.triggerReturnedFile + 1 }
                 |> withNoCmd
@@ -959,7 +1027,7 @@ update msg model =
                 wrapper =
                     \bm -> ButtonMsg bm operation
             in
-            case SB.checkSubscription (Debug.log "checkSubscription" m) button of
+            case SB.checkSubscription m button of
                 Just ( time, m2 ) ->
                     let
                         ( subscription, cmd ) =
@@ -1040,7 +1108,7 @@ update msg model =
                 |> withNoCmd
 
         SetAlignmentString string ->
-            update (SetAlignment <| stringToAlignment string) model
+            updateInternal (SetAlignment <| stringToAlignment string) model
 
         SetFont string ->
             { model
@@ -1159,6 +1227,15 @@ update msg model =
                     res
 
 
+receivePutImageImages : String -> String -> Maybe Value -> Cmd Msg
+receivePutImageImages url hash value =
+    if value == Nothing then
+        Task.perform (PutImageUrl hash) <| Task.succeed url
+
+    else
+        Task.perform ImageExists <| Task.succeed hash
+
+
 buttonOperate : Bool -> ButtonOperation -> Model -> Model
 buttonOperate isClick operation model =
     if not isClick then
@@ -1252,7 +1329,25 @@ localStorageSend message model =
 
 storageHandler : LocalStorage.Response -> PortFunnels.State -> Model -> ( Model, Cmd Msg )
 storageHandler response state model =
-    model |> withNoCmd
+    case Debug.log "storageHandler" response of
+        LocalStorage.GetResponse { key, value } ->
+            let
+                ( pkey, subkey ) =
+                    decodeSubkey key
+            in
+            if pkey == persistenceKeys.images then
+                ( model
+                , Task.perform (ReceiveImagesKey subkey) (Task.succeed value)
+                )
+
+            else
+                model |> withNoCmd
+
+        LocalStorage.ListKeysResponse { keys } ->
+            model |> withNoCmd
+
+        _ ->
+            model |> withNoCmd
 
 
 br : Html msg
@@ -2297,3 +2392,125 @@ fontFormat float =
 
     else
         res
+
+
+car : List String -> String
+car list =
+    Maybe.withDefault "" <| List.head list
+
+
+cdr : List a -> List a
+cdr list =
+    Maybe.withDefault [] <| List.tail list
+
+
+
+{-
+
+      Persistence
+
+   Keys are in `persistenceKeys`.
+
+   model: An instance of `SavedModel`.
+   meme: The Current meme. An instance of `Meme`.
+   memes: Saved memes. "memes.<name>" is an instance of `Meme`.
+   images: Saved images. "images.<hash>" is the string with the MD5 <hash>.
+
+   Images are serialized to the hash of their url, so we get only one
+   copy of each.
+
+-}
+
+
+localStoragePrefix : String
+localStoragePrefix =
+    "zapmeme"
+
+
+{-| Plural means there are subkeys, e.g. "memes.<name>","images.<hash>"
+-}
+persistenceKeys =
+    { model = "model"
+    , meme = "meme"
+    , memes = "memes"
+    , images = "images"
+    , imageurls = "imageurls"
+    }
+
+
+encodeSubkey : String -> String -> String
+encodeSubkey key subkey =
+    key ++ "." ++ subkey
+
+
+decodeSubkey : String -> ( String, String )
+decodeSubkey fullkey =
+    String.split "." fullkey
+        |> (\list ->
+                ( car list, String.join "." <| cdr list )
+           )
+
+
+modelToSavedModel : Model -> SavedModel
+modelToSavedModel model =
+    { selectedPosition = model.selectedPosition
+    , showCaptionBorders = model.showCaptionBorders
+    , maxWidth = model.maxWidth
+    , maxHeight = model.maxHeight
+    , inputs = model.inputs
+    , showHelp = model.showHelp
+    }
+
+
+get : String -> Model -> Cmd Msg
+get key model =
+    localStorageSend (LocalStorage.get <| Debug.log "get" key) model
+
+
+put : String -> Maybe Value -> Model -> Cmd Msg
+put key value model =
+    let
+        k =
+            Debug.log "put" key
+    in
+    localStorageSend (LocalStorage.put key value) model
+
+
+putModel : Model -> Cmd Msg
+putModel model =
+    let
+        savedModel =
+            modelToSavedModel model
+
+        value =
+            ED.encodeSavedModel savedModel
+    in
+    Cmd.batch
+        [ put persistenceKeys.model (Just value) model
+        , putMeme model.meme model
+        ]
+
+
+putMeme : Meme -> Model -> Cmd Msg
+putMeme meme model =
+    let
+        image =
+            meme.image
+
+        url =
+            image.url
+
+        urlHash =
+            MD5.hex url
+
+        value =
+            ED.encodeMeme
+                { meme
+                    | image =
+                        { image | url = urlHash }
+                }
+    in
+    Cmd.batch
+        [ put persistenceKeys.meme (Just value) model
+        , Task.perform (MaybePutImageUrl urlHash) <| Task.succeed url
+        ]
