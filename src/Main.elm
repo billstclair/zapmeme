@@ -386,6 +386,7 @@ type alias Model =
     , key : Key
     , receiveImagesHandler : Maybe (String -> Maybe Value -> Cmd Msg)
     , receivedMeme : Maybe Meme
+    , receivedModel : Maybe SavedModel
     , knownImages : Set String
     , funnelState : PortFunnels.State
     , msg : Maybe String
@@ -604,6 +605,7 @@ init flags url key =
             , key = key
             , receiveImagesHandler = Nothing
             , receivedMeme = Nothing
+            , receivedModel = Nothing
             , knownImages = Set.empty
             , funnelState = PortFunnels.initialState localStoragePrefix
             , msg = Nothing
@@ -611,7 +613,9 @@ init flags url key =
     in
     model
         |> withCmds
-            [ get persistenceKeys.meme model ]
+            [ get persistenceKeys.meme model
+            , get persistenceKeys.model model
+            ]
 
 
 findCaption : Maybe TextPosition -> List Caption -> Maybe Caption
@@ -997,8 +1001,26 @@ updateInternal msg model =
 
         ReceiveImage hash value ->
             let
+                mdl1 =
+                    { model
+                        | receivedMeme = Nothing
+                        , receivedModel = Nothing
+                    }
+
                 mdl =
-                    { model | receivedMeme = Nothing }
+                    case model.receivedModel of
+                        Nothing ->
+                            mdl1
+
+                        Just savedModel ->
+                            { mdl1
+                                | selectedPosition = savedModel.selectedPosition
+                                , showCaptionBorders = savedModel.showCaptionBorders
+                                , maxWidth = savedModel.maxWidth
+                                , maxHeight = savedModel.maxHeight
+                                , inputs = savedModel.inputs
+                                , showHelp = savedModel.showHelp
+                            }
             in
             case Debug.log "ReceiveImage" value of
                 Nothing ->
@@ -1024,11 +1046,22 @@ updateInternal msg model =
                                                     }
                                             }
                                     }
-                                        |> withNoCmd
+                                        |> withCmd
+                                            (get persistenceKeys.model mdl)
 
         ReceiveModel value ->
-            -- TODO
-            model |> withNoCmd
+            case value of
+                Nothing ->
+                    model |> withNoCmd
+
+                Just v ->
+                    case ED.decodeSavedModel v of
+                        Err _ ->
+                            model |> withNoCmd
+
+                        Ok savedModel ->
+                            { model | receivedModel = Just savedModel }
+                                |> withNoCmd
 
         GetReturnedFile ->
             { model | triggerReturnedFile = model.triggerReturnedFile + 1 }
