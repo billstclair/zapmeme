@@ -299,6 +299,12 @@ captionCoordinates caption totalWidth totalHeight =
     ( position, ( w, h ) )
 
 
+emptyImage =
+    { url = ""
+    , hash = ""
+    }
+
+
 initialImage =
     { url = data.pigeon
     , hash = MD5.hex data.pigeon
@@ -332,10 +338,19 @@ sampleCaptions =
     ]
 
 
-emptyMeme : Meme
-emptyMeme =
+initialMeme : Meme
+initialMeme =
     { image = initialImage
     , captions = sampleCaptions
+    , width = 839
+    , height = 503
+    }
+
+
+emptyMeme : Meme
+emptyMeme =
+    { image = emptyImage
+    , captions = []
     , width = 839
     , height = 503
     }
@@ -370,6 +385,7 @@ type alias Model =
     , fontDict : Dict String Font
     , key : Key
     , receiveImagesHandler : Maybe (String -> Maybe Value -> Cmd Msg)
+    , receivedMeme : Maybe Meme
     , knownImages : Set String
     , funnelState : PortFunnels.State
     , msg : Maybe String
@@ -504,7 +520,10 @@ type Msg
     | MaybePutImageUrl String String
     | ImageExists String
     | PutImageUrl String String
-    | ReceiveImagesKey String (Maybe Value)
+    | ReceiveImageKey String (Maybe Value)
+    | ReceiveMeme (Maybe Value)
+    | ReceiveImage String (Maybe Value)
+    | ReceiveModel (Maybe Value)
     | HandleUrlRequest UrlRequest
     | HandleUrlChange Url
     | ProcessLocalStorage Value
@@ -555,42 +574,44 @@ buttonPair =
 
 init : Value -> Url -> Key -> ( Model, Cmd Msg )
 init flags url key =
-    { meme = emptyMeme
-    , deletedCaption = Nothing
-    , selectedPosition = Nothing
-    , showCaptionBorders = False
-    , controller = CaptionHeightController
-    , inputs = initialInputs
-    , maxWidth = 800
-    , maxHeight = 600
-    , file = Nothing
-    , triggerImageProperties = 0
-    , downloadFile = Nothing
-    , triggerReturnedFile = 0
-    , fileName = "meme.jpg"
-    , mimeType = "image/jpeg"
-    , incrementButton =
-        SB.repeatingButton repeatTime
-            buttonPair
-            ()
-    , decrementButton =
-        SB.repeatingButton repeatTime
-            buttonPair
-            ()
-    , showHelp = False
-    , subscription = Nothing
-    , fontDict = safeFontDict
-    , key = key
-    , receiveImagesHandler = Nothing
-    , knownImages = Set.empty
-    , funnelState = PortFunnels.initialState localStoragePrefix
-    , msg = Nothing
-    }
-        |> withCmd
-            -- Need to do this so we compute the size at startup
-            (Task.perform ReceiveImageUrl <|
-                Task.succeed initialImage.url
-            )
+    let
+        model =
+            { meme = emptyMeme
+            , deletedCaption = Nothing
+            , selectedPosition = Nothing
+            , showCaptionBorders = False
+            , controller = CaptionHeightController
+            , inputs = initialInputs
+            , maxWidth = 800
+            , maxHeight = 600
+            , file = Nothing
+            , triggerImageProperties = 0
+            , downloadFile = Nothing
+            , triggerReturnedFile = 0
+            , fileName = "meme.jpg"
+            , mimeType = "image/jpeg"
+            , incrementButton =
+                SB.repeatingButton repeatTime
+                    buttonPair
+                    ()
+            , decrementButton =
+                SB.repeatingButton repeatTime
+                    buttonPair
+                    ()
+            , showHelp = False
+            , subscription = Nothing
+            , fontDict = safeFontDict
+            , key = key
+            , receiveImagesHandler = Nothing
+            , receivedMeme = Nothing
+            , knownImages = Set.empty
+            , funnelState = PortFunnels.initialState localStoragePrefix
+            , msg = Nothing
+            }
+    in
+    model
+        |> withCmds
+            [ get persistenceKeys.meme model ]
 
 
 findCaption : Maybe TextPosition -> List Caption -> Maybe Caption
@@ -790,7 +811,8 @@ update msg model =
                     False
 
                 _ ->
-                    modelToSavedModel mdl /= modelToSavedModel model
+                    (modelToSavedModel mdl /= modelToSavedModel model)
+                        || (mdl.meme /= model.meme)
     in
     mdl
         |> withCmds
@@ -944,7 +966,7 @@ updateInternal msg model =
                     , put key (Just <| JE.string url) model
                     ]
 
-        ReceiveImagesKey hash value ->
+        ReceiveImageKey hash value ->
             case model.receiveImagesHandler of
                 Nothing ->
                     model |> withNoCmd
@@ -953,6 +975,60 @@ updateInternal msg model =
                     ( { model | receiveImagesHandler = Nothing }
                     , handler hash value
                     )
+
+        ReceiveMeme value ->
+            case Debug.log "ReceiveMeme" value of
+                Nothing ->
+                    useInitialMeme model
+
+                Just v ->
+                    case ED.decodeMeme v of
+                        Err _ ->
+                            useInitialMeme model
+
+                        Ok meme ->
+                            ( { model | receivedMeme = Just meme }
+                            , get
+                                (encodeSubkey persistenceKeys.imageurls
+                                    meme.image.hash
+                                )
+                                model
+                            )
+
+        ReceiveImage hash value ->
+            let
+                mdl =
+                    { model | receivedMeme = Nothing }
+            in
+            case Debug.log "ReceiveImage" value of
+                Nothing ->
+                    useInitialMeme mdl
+
+                Just v ->
+                    case model.receivedMeme of
+                        Nothing ->
+                            useInitialMeme mdl
+
+                        Just meme ->
+                            case JD.decodeValue JD.string v of
+                                Err _ ->
+                                    mdl |> withNoCmd
+
+                                Ok url ->
+                                    { mdl
+                                        | meme =
+                                            { meme
+                                                | image =
+                                                    { url = url
+                                                    , hash = hash
+                                                    }
+                                            }
+                                    }
+                                        |> withNoCmd
+
+        ReceiveModel value ->
+            -- TODO
+            model |> withNoCmd
 
         GetReturnedFile ->
             { model | triggerReturnedFile = model.triggerReturnedFile + 1 }
@@ -1231,6 +1307,15 @@ updateInternal msg model =
                     res
 
 
+useInitialMeme : Model -> ( Model, Cmd Msg )
+useInitialMeme model =
+    ( { model | meme = initialMeme }
+      -- To get the size
+    , Task.perform ReceiveImageUrl <|
+        Task.succeed initialImage.url
+    )
+
+
 receivePutImageImages : String -> String -> Maybe Value -> Cmd Msg
 receivePutImageImages url hash value =
     if value == Nothing then
@@ -1345,7 +1430,22 @@ storageHandler response state model =
             in
             if pkey == persistenceKeys.images then
                 ( model
-                , Task.perform (ReceiveImagesKey subkey) (Task.succeed value)
+                , Task.perform (ReceiveImageKey subkey) (Task.succeed value)
+                )
+
+            else if pkey == persistenceKeys.meme then
+                ( model
+                , Task.perform ReceiveMeme (Task.succeed value)
+                )
+
+            else if pkey == persistenceKeys.model then
+                ( model
+                , Task.perform ReceiveModel (Task.succeed value)
+                )
+
+            else if pkey == persistenceKeys.imageurls then
+                ( model
+                , Task.perform (ReceiveImage subkey) (Task.succeed value)
                 )
 
             else
@@ -2512,11 +2612,7 @@ putMeme meme model =
             image.hash
 
         value =
-            ED.encodeMeme
-                { meme
-                    | image =
-                        { image | url = urlHash }
-                }
+            ED.encodeMeme meme
     in
     Cmd.batch
         [ put persistenceKeys.meme (Just value) model

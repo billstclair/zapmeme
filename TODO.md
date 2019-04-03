@@ -21,6 +21,8 @@ This file tracks bugs and ideas for new features.
 
 ## Nice Features
 
+* Space above first line of caption text.
+  Not useful for bottom positions, but desirable for top and middle.
 * Markdown text.
 * Resize handles on caption borders.
 * Custom caption location, not just the nine current positions.
