@@ -804,19 +804,27 @@ update msg model =
             updateInternal msg model
 
         doit =
-            case msg of
-                MaybePutImageUrl _ _ ->
-                    False
+            (model.subscription
+                /= Nothing
+                && mdl.subscription
+                == Nothing
+            )
+                || ((mdl.subscription == Nothing)
+                        && (case msg of
+                                MaybePutImageUrl _ _ ->
+                                    False
 
-                PutImageUrl _ _ ->
-                    False
+                                PutImageUrl _ _ ->
+                                    False
 
-                ImageExists _ ->
-                    False
+                                ImageExists _ ->
+                                    False
 
-                _ ->
-                    (modelToSavedModel mdl /= modelToSavedModel model)
-                        || (mdl.meme /= model.meme)
+                                _ ->
+                                    (modelToSavedModel mdl /= modelToSavedModel model)
+                                        || (mdl.meme /= model.meme)
+                           )
+                   )
     in
     mdl
         |> withCmds
