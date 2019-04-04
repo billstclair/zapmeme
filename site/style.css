@@ -1,14 +1,15 @@
-body { margin-top: 1em;
-     }
-
 textarea {
-    width: 85vw;
+    width: calc(85vw - 45px);
     height: 80px;
+}
+
+p {
+    width: 90%;
 }
 
 // add "screen and" ?
 @media (max-width: 450px) {
-    textarea { width: calc(95% - 45px); }
+    p { width: 360px; }
 }
 
 p, th, td, button, textarea {
@@ -23,6 +24,7 @@ p, th, td, button, textarea {
 
 @media (min-width: 800px) {
     textarea { width: 680px; }
+    p { width: 720px; }
 }
 
 @media (min-width: 1000px) {

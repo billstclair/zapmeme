@@ -372,6 +372,7 @@ type alias Model =
     , showHelp : Bool
 
     -- Below here is not persistent.
+    , windowSize : ( Int, Int )
     , deletedCaption : Maybe Caption
     , controller : Controller
     , file : Maybe File
@@ -485,6 +486,7 @@ type Msg
     = Noop
     | InitialDelay Posix
     | Tick Posix
+    | WindowResize Int Int
     | SelectCaption (Maybe TextPosition)
     | AddCaption
     | DeleteCaption
@@ -559,6 +561,7 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ Time.every shortRepeatTimeDelay Tick
+        , Events.onResize WindowResize
         , PortFunnels.subscriptions ProcessLocalStorage model
         ]
 
@@ -600,6 +603,7 @@ init flags url key =
                     buttonPair
                     ()
             , showHelp = False
+            , windowSize = ( 2000, 2000 )
             , subscription = Nothing
             , fontDict = safeFontDict
             , key = key
@@ -613,9 +617,19 @@ init flags url key =
     in
     model
         |> withCmds
-            [ get persistenceKeys.meme model
+            [ Task.perform getViewport Dom.getViewport
+            , get persistenceKeys.meme model
             , get persistenceKeys.model model
             ]
+
+
+getViewport : Viewport -> Msg
+getViewport viewport =
+    let
+        vp =
+            viewport.viewport
+    in
+    WindowResize (round vp.width) (round vp.height)
 
 
 findCaption : Maybe TextPosition -> List Caption -> Maybe Caption
@@ -876,6 +890,10 @@ updateInternal msg model =
 
                     else
                         model |> withNoCmd
+
+        WindowResize w h ->
+            { model | windowSize = ( w, h ) }
+                |> withNoCmd
 
         AddCaption ->
             addCaption model
@@ -1608,6 +1626,15 @@ center =
     Html.node "center"
 
 
+maxMemeSize : Model -> ( Int, Int )
+maxMemeSize model =
+    let
+        ( w, h ) =
+            model.windowSize
+    in
+    ( w * 95 // 100, h // 2 )
+
+
 view : Model -> Document Msg
 view model =
     let
@@ -1616,14 +1643,22 @@ view model =
 
         scale =
             scalewh ( model.maxWidth, model.maxHeight ) ( meme.width, meme.height )
+
+        scalememe =
+            scalewh (maxMemeSize model) ( scale.width, scale.height )
     in
     { title = "ZAP Meme"
     , body =
         [ div
-            [ align "center" ]
+            [ align "center"
+            ]
             [ h2 [] [ text "ZAP Meme" ]
-            , p []
-                [ renderMeme scale model
+            , span []
+                [ renderMeme
+                    { scalememe
+                        | scale = scale.scale * scalememe.scale
+                    }
+                    model
                 , ImageProperties.imageProperties
                     [ ImageProperties.imageId imageId
                     , ImageProperties.triggerImageProperties
@@ -1657,7 +1692,8 @@ view model =
                     _ ->
                         button [ onClick UndoDeletion ]
                             [ text "Undo Deletion" ]
-                , renderInputs scale model
+                , br
+                , renderInputs scale scalememe model
                 ]
             , button
                 [ onClick ToggleHelp
@@ -1734,8 +1770,14 @@ controllerRadio isDisabled controller model =
         []
 
 
-renderInputs : ScaleWH -> Model -> Html Msg
-renderInputs scale model =
+nbspd : List (Html Msg) -> Html Msg
+nbspd elements =
+    span [ style "white-space" "nowrap" ] <|
+        List.intersperse (text chars.nbsp) elements
+
+
+renderInputs : ScaleWH -> ScaleWH -> Model -> Html Msg
+renderInputs scale scalememe model =
     let
         inputs =
             model.inputs
@@ -1745,79 +1787,91 @@ renderInputs scale model =
 
         meme =
             model.meme
+
+        isOutlined =
+            inputs.isOutlined
+
+        outlineColor =
+            if isOutlined then
+                inputs.outlineColor
+
+            else
+                "none"
     in
-    table []
-        [ tr []
-            [ td [ colspan 2 ]
-                [ table []
-                    [ tr []
-                        [ td []
-                            [ textarea
-                                [ onInput SetText
-                                , rows 4
-                                , id "text"
-                                , value inputs.text
-                                ]
-                                []
-                            ]
-                        , td []
-                            [ svg
-                                [ style "margin" "auto"
-                                , height <| ftos (2 * buttonSize - 2)
-                                , width <| ftos buttonSize
-                                ]
-                                [ SB.render ( 0, 0 )
-                                    (SB.TextContent "^")
-                                    (\m -> ButtonMsg m IncrementButton)
-                                    model.incrementButton
-                                , SB.render ( 0, buttonSize - 2 )
-                                    (SB.TextContent "v")
-                                    (\m -> ButtonMsg m DecrementButton)
-                                    model.decrementButton
-                                ]
-                            ]
+    span []
+        [ table []
+            [ tr []
+                [ td []
+                    [ textarea
+                        [ onInput SetText
+                        , rows 4
+                        , id "text"
+                        , value inputs.text
+                        ]
+                        []
+                    ]
+                , td []
+                    [ svg
+                        [ style "margin" "auto"
+                        , height <| ftos (2 * buttonSize - 2)
+                        , width <| ftos buttonSize
+                        ]
+                        [ SB.render ( 0, 0 )
+                            (SB.TextContent "^")
+                            (\m -> ButtonMsg m IncrementButton)
+                            model.incrementButton
+                        , SB.render ( 0, buttonSize - 2 )
+                            (SB.TextContent "v")
+                            (\m -> ButtonMsg m DecrementButton)
+                            model.decrementButton
                         ]
                     ]
                 ]
             ]
-        , tr []
-            [ td
-                [ colspan 2
-                , style "text-align" "center"
-                ]
-                [ b "Selected Caption" ]
-            ]
-        , tr []
-            [ thm
+        , p [ style "margin-bottom" "0.5em" ]
+            [ b "Selected Caption" ]
+        , p [ style "margin-top" "0" ]
+            [ nbspd
                 [ controllerRadio isDisabled CaptionWidthController model
-                , text " Width:"
+                , text "Width: "
+                , span []
+                    [ input
+                        [ type_ "text"
+                        , disabled isDisabled
+                        , textalign "right"
+                        , size 3
+                        , onInput SetWidth
+                        , value inputs.width
+                        ]
+                        []
+                    , text "%"
+                    ]
                 ]
-            , td []
-                [ input
-                    [ type_ "text"
-                    , disabled isDisabled
-                    , textalign "right"
-                    , size 3
-                    , onInput SetWidth
-                    , value inputs.width
+            , text " "
+            , nbspd
+                [ controllerRadio isDisabled CaptionHeightController model
+                , b "Height:"
+                , span []
+                    [ input
+                        [ type_ "text"
+                        , disabled isDisabled
+                        , textalign "right"
+                        , size 3
+                        , onInput SetHeight
+                        , value inputs.height
+                        ]
+                        []
+                    , text "%"
                     ]
-                    []
-                , text "% "
-                , controllerRadio isDisabled CaptionHeightController model
-                , b " Height: "
-                , input
-                    [ type_ "text"
-                    , disabled isDisabled
-                    , textalign "right"
-                    , size 3
-                    , onInput SetHeight
-                    , value inputs.height
-                    ]
-                    []
-                , text "%"
-                , b " Position: "
+                ]
+            , text " "
+            , nbspd
+                [ b "Position:"
                 , positionSelector isDisabled model
-                , b " Borders: "
+                ]
+            , text " "
+            , nbspd
+                [ b "Borders:"
                 , input
                     [ type_ "checkbox"
                     , onCheck SetShowCaptionBorders
@@ -1825,27 +1879,36 @@ renderInputs scale model =
                     ]
                     []
                 ]
-            ]
-        , tr []
-            [ th "Alignment:"
-            , td []
-                [ alignmentSelector isDisabled model
-                , b " Font: "
+            , text " "
+            , nbspd
+                [ b "Alignment:"
+                , alignmentSelector isDisabled model
+                ]
+            , text " "
+            , nbspd
+                [ b "Font: "
                 , fontSelector isDisabled model
-                , text " "
-                , controllerRadio isDisabled FontHeightController model
-                , b " Height: "
-                , input
-                    [ type_ "text"
-                    , disabled isDisabled
-                    , textalign "right"
-                    , size 3
-                    , onInput SetFontSize
-                    , value inputs.fontsize
+                ]
+            , text " "
+            , nbspd
+                [ controllerRadio isDisabled FontHeightController model
+                , b "Height:"
+                , span []
+                    [ input
+                        [ type_ "text"
+                        , disabled isDisabled
+                        , textalign "right"
+                        , size 3
+                        , onInput SetFontSize
+                        , value inputs.fontsize
+                        ]
+                        []
+                    , text "%"
                     ]
-                    []
-                , text "%"
-                , b " Bold: "
+                ]
+            , text " "
+            , nbspd
+                [ b "Bold: "
                 , input
                     [ type_ "checkbox"
                     , disabled isDisabled
@@ -1854,23 +1917,10 @@ renderInputs scale model =
                     ]
                     []
                 ]
-            ]
-        , tr []
-            [ th "Color:"
-            , let
-                isOutlined =
-                    inputs.isOutlined
-
-                outlineColor =
-                    if isOutlined then
-                        inputs.outlineColor
-
-                    else
-                        "none"
-              in
-              td []
-                [ colorSelector False False isDisabled inputs.fontcolor
-                , text " "
+            , text " "
+            , nbspd
+                [ b "Color: "
+                , colorSelector False False isDisabled inputs.fontcolor
                 , input
                     [ type_ "text"
                     , disabled isDisabled
@@ -1879,10 +1929,11 @@ renderInputs scale model =
                     , value inputs.fontcolor
                     ]
                     []
-                , text " "
-                , b "Outline: "
+                ]
+            , text " "
+            , nbspd
+                [ b "Outline: "
                 , colorSelector True (not isOutlined) isDisabled inputs.outlineColor
-                , text " "
                 , input
                     [ type_ "text"
                     , disabled (isDisabled || not isOutlined)
@@ -1893,50 +1944,44 @@ renderInputs scale model =
                     []
                 ]
             ]
-        , tr []
-            [ td
-                [ colspan 2
-                , style "text-align" "center"
-                ]
-                [ b "Background" ]
-            ]
-        , tr []
-            [ th "Image:"
-            , td []
-                [ button [ onClick <| ReceiveImageUrl initialImage.url ]
+        , p [ style "margin-bottom" "0.5em" ]
+            [ b "Background" ]
+        , p [ style "margin-top" "0" ]
+            [ nbspd
+                [ b "Image:"
+                , button [ onClick <| ReceiveImageUrl initialImage.url ]
                     [ text "Default" ]
-                , text " "
                 , button [ onClick SelectImageFile ]
                     [ text "Choose" ]
-                , text " "
-                , input
+                ]
+            , text " "
+            , nbspd
+                [ input
                     [ type_ "text"
                     , size 15
                     , onInput SetImageUrl
                     , value inputs.imageUrl
                     ]
                     []
-                , text " "
                 , button [ onClick SetMemeImageUrl ]
                     [ text "URL" ]
                 ]
-            ]
-        , tr []
-            [ thm
+            , text " "
+            , nbspd
                 [ controllerRadio False MaxWidthController model
-                , text " Max Width:"
-                ]
-            , td []
-                [ input
+                , b "Max Width:"
+                , input
                     [ type_ "text"
                     , size 5
                     , onInput SetMaxWidth
                     , value <| tos model.maxWidth
                     ]
                     []
-                , text " "
-                , controllerRadio False MaxHeightController model
-                , b " Height: "
+                ]
+            , text " "
+            , nbspd
+                [ controllerRadio False MaxHeightController model
+                , b "Height:"
                 , input
                     [ type_ "text"
                     , size 5
@@ -1944,35 +1989,49 @@ renderInputs scale model =
                     , value <| tos model.maxHeight
                     ]
                     []
-                , span [ style "font-size" "80%" ]
+                ]
+            , nbspd
+                [ span [ style "font-size" "80%" ]
                     [ text " ("
                     , text <| tos meme.width
-                    , text " x "
+                    , text "x"
                     , text <| tos meme.height
-                    , text ") * "
-                    , text <| format usLocale scale.scale
-                    , text " = ("
+                    , text ") Scaled: ("
                     , text <| tos scale.width
-                    , text " x "
+                    , text "x"
                     , text <| tos scale.height
                     , text ")"
                     ]
                 ]
-            ]
-        , tr []
-            [ th "File Name:"
-            , td []
-                [ input
+            , if scalememe.scale >= 1 then
+                text ""
+
+              else
+                nbspd
+                    [ span [ style "font-size" "80%" ]
+                        [ text " Displayed: ("
+                        , text <| tos scalememe.width
+                        , text "x"
+                        , text <| tos scalememe.height
+                        , text ")"
+                        ]
+                    ]
+            , br
+            , nbspd
+                [ b "File Name: "
+                , input
                     [ type_ "text"
-                    , size 20
+                    , size 15
                     , onInput SetFileName
                     , value inputs.fileName
                     ]
                     []
-                , b " Download: "
+                ]
+            , text " "
+            , nbspd
+                [ b "Download:"
                 , button [ onClick <| StartDownload "image/jpeg" ".jpg" ]
                     [ text "JPEG" ]
-                , text " "
                 , button [ onClick <| StartDownload "image/png" ".png" ]
                     [ text "PNG" ]
                 ]
