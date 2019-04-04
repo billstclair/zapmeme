@@ -1652,8 +1652,7 @@ view model =
         [ div
             [ align "center"
             ]
-            [ h2 [] [ text "ZAP Meme" ]
-            , span []
+            [ span []
                 [ renderMeme
                     { scalememe
                         | scale = scale.scale * scalememe.scale
@@ -1712,7 +1711,8 @@ view model =
                 text ""
             , fontParagraph
             , p []
-                [ text <| chars.copyright ++ " 2019 Bill St. Clair"
+                [ h2 [ style "margin-bottom" "0" ] [ text "ZAP Meme" ]
+                , text <| chars.copyright ++ " 2019 Bill St. Clair"
                 , br
                 , a
                     [ href "https://github.com/billstclair/zapmeme"
