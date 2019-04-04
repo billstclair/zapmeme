@@ -804,10 +804,8 @@ update msg model =
             updateInternal msg model
 
         doit =
-            (model.subscription
-                /= Nothing
-                && mdl.subscription
-                == Nothing
+            ((model.subscription /= Nothing)
+                && (mdl.subscription == Nothing)
             )
                 || ((mdl.subscription == Nothing)
                         && (case msg of
@@ -1755,10 +1753,8 @@ renderInputs scale model =
                     [ tr []
                         [ td []
                             [ textarea
-                                [ rows 3
-                                , cols 50
-                                , style "font-size" "20px"
-                                , onInput SetText
+                                [ onInput SetText
+                                , rows 4
                                 , id "text"
                                 , value inputs.text
                                 ]
@@ -1819,12 +1815,8 @@ renderInputs scale model =
                     ]
                     []
                 , text "%"
-                ]
-            ]
-        , tr []
-            [ th "Position:"
-            , td []
-                [ positionSelector isDisabled model
+                , b " Position: "
+                , positionSelector isDisabled model
                 , b " Borders: "
                 , input
                     [ type_ "checkbox"
@@ -1838,6 +1830,21 @@ renderInputs scale model =
             [ th "Alignment:"
             , td []
                 [ alignmentSelector isDisabled model
+                , b " Font: "
+                , fontSelector isDisabled model
+                , text " "
+                , controllerRadio isDisabled FontHeightController model
+                , b " Height: "
+                , input
+                    [ type_ "text"
+                    , disabled isDisabled
+                    , textalign "right"
+                    , size 3
+                    , onInput SetFontSize
+                    , value inputs.fontsize
+                    ]
+                    []
+                , text "%"
                 , b " Bold: "
                 , input
                     [ type_ "checkbox"
@@ -1849,46 +1856,12 @@ renderInputs scale model =
                 ]
             ]
         , tr []
-            [ th "Font:"
-            , td []
-                [ fontSelector isDisabled model
-                , text " "
-                , controllerRadio isDisabled FontHeightController model
-                , b " Height: "
-                , input
-                    [ type_ "text"
-                    , disabled isDisabled
-                    , textalign "right"
-                    , size 5
-                    , onInput SetFontSize
-                    , value inputs.fontsize
-                    ]
-                    []
-                , text "%"
-                ]
-            ]
-        , tr []
-            [ th "Font Color:"
-            , td []
-                [ colorSelector False False isDisabled inputs.fontcolor
-                , text " "
-                , input
-                    [ type_ "text"
-                    , disabled isDisabled
-                    , size 20
-                    , onInput SetFontColor
-                    , value inputs.fontcolor
-                    ]
-                    []
-                ]
-            ]
-        , tr []
-            [ th "Outline Color:"
+            [ th "Color:"
             , let
                 isOutlined =
                     inputs.isOutlined
 
-                color =
+                outlineColor =
                     if isOutlined then
                         inputs.outlineColor
 
@@ -1896,24 +1869,28 @@ renderInputs scale model =
                         "none"
               in
               td []
-                [ colorSelector True (not isOutlined) isDisabled inputs.outlineColor
+                [ colorSelector False False isDisabled inputs.fontcolor
+                , text " "
+                , input
+                    [ type_ "text"
+                    , disabled isDisabled
+                    , size 10
+                    , onInput SetFontColor
+                    , value inputs.fontcolor
+                    ]
+                    []
+                , text " "
+                , b "Outline: "
+                , colorSelector True (not isOutlined) isDisabled inputs.outlineColor
                 , text " "
                 , input
                     [ type_ "text"
                     , disabled (isDisabled || not isOutlined)
-                    , size 20
+                    , size 10
                     , onInput SetOutlineColor
-                    , value color
+                    , value outlineColor
                     ]
                     []
-                , if isOutlined then
-                    span []
-                        [ br
-                        , text "(not line-wrapped, use <br>)"
-                        ]
-
-                  else
-                    text ""
                 ]
             ]
         , tr []
@@ -1927,20 +1904,21 @@ renderInputs scale model =
             [ th "Image:"
             , td []
                 [ button [ onClick <| ReceiveImageUrl initialImage.url ]
-                    [ text "Use Default" ]
+                    [ text "Default" ]
                 , text " "
                 , button [ onClick SelectImageFile ]
-                    [ text "Choose File" ]
-                , br
+                    [ text "Choose" ]
+                , text " "
                 , input
                     [ type_ "text"
-                    , size 20
+                    , size 15
                     , onInput SetImageUrl
                     , value inputs.imageUrl
                     ]
                     []
+                , text " "
                 , button [ onClick SetMemeImageUrl ]
-                    [ text "Use URL" ]
+                    [ text "URL" ]
                 ]
             ]
         , tr []
@@ -1966,9 +1944,8 @@ renderInputs scale model =
                     , value <| tos model.maxHeight
                     ]
                     []
-                , br
                 , span [ style "font-size" "80%" ]
-                    [ text "("
+                    [ text " ("
                     , text <| tos meme.width
                     , text " x "
                     , text <| tos meme.height
@@ -2263,7 +2240,8 @@ fontParagraph =
         List.concat
             [ [ span
                     [ style "font-size" "110%"
-                    , style "font-weight" "bold"
+
+                    --, style "font-weight" "bold"
                     ]
                     [ text "Fonts" ]
               , br

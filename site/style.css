@@ -1,0 +1,32 @@
+body { margin-top: 1em;
+     }
+
+textarea {
+    width: 85vw;
+    height: 80px;
+}
+
+// add "screen and" ?
+@media (max-width: 450px) {
+    textarea { width: calc(95% - 45px); }
+}
+
+p, th, td, button, textarea {
+    font-size: 2vw;
+}
+
+@media (max-width: 600px) {
+    p, th, td, button, textarea {
+        font-size: 12px;
+    }
+}
+
+@media (min-width: 800px) {
+    textarea { width: 680px; }
+}
+
+@media (min-width: 1000px) {
+    p, th, td, button, textarea {
+        font-size: 20px;
+    }
+}
