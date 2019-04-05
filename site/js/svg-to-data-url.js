@@ -99,7 +99,8 @@ customElements.define('svg-to-data-url', class extends HTMLElement {
 
   set triggerReturnedUrl(trigger) {
     // Don't trigger on first set.
-    var doit = this._triggerReturnedUrl !== null;
+    var doit = this._triggerReturnedUrl !== null
+        && this._triggerReturnedUrl != trigger
     this._triggerReturnedUrl = trigger;
     if (doit) {
       var parameters = this._returnedUrlParameters;
@@ -116,7 +117,7 @@ customElements.define('svg-to-data-url', class extends HTMLElement {
         }
 
         var svg = getSvgElement(svgId);
-        var tagName = svg.tagName;
+        var tagName = svg && svg.tagName
         if (typeof(tagName) == "string") {
           if (tagName == "svg") {
             function callback(url) {
@@ -145,7 +146,8 @@ customElements.define('svg-to-data-url', class extends HTMLElement {
 
   set triggerReturnedFile(trigger) {
     // Don't trigger on first set.
-    var doit = this._triggerReturnedFile !== null;
+    var doit = this._triggerReturnedFile !== null
+            && this._triggerReturnedFile != trigger
     this._triggerReturnedFile = trigger;
     if (doit) {
       var parameters = this._returnedFileParameters;
@@ -154,9 +156,11 @@ customElements.define('svg-to-data-url', class extends HTMLElement {
         var fileName = parameters.fileName
         var mimeType = parameters.mimeType;
 
+        var a = document.createElement('a');
         this._returnedFile = { svgId: svgId,
                                fileName: fileName,
-                               mimeType: mimeType
+                               mimeType: mimeType,
+                               canDownload: a.download == ''
                              }
         var that = this;
         function dispatch() {
@@ -164,7 +168,7 @@ customElements.define('svg-to-data-url', class extends HTMLElement {
         }
 
         var svg = getSvgElement(svgId);
-        var tagName = svg.tagName;
+        var tagName = svg && svg.tagName
         if (typeof(tagName) == "string") {
           if (tagName == "svg") {
             function callback(file) {

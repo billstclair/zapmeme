@@ -74,6 +74,7 @@ type alias ReturnedFile =
     { svgId : String
     , fileName : String
     , mimeType : String
+    , canDownload : Bool
     , file : File
     }
 
@@ -174,8 +175,9 @@ returnedFileDecoder =
 
 returnedFileDecoderDebug : Value -> Decoder ReturnedFile
 returnedFileDecoderDebug value =
-    JD.map4 ReturnedFile
+    JD.map5 ReturnedFile
         (JD.field "svgId" JD.string)
         (JD.field "fileName" JD.string)
         (JD.field "mimeType" JD.string)
+        (JD.field "canDownload" JD.bool)
         (JD.field "file" File.decoder)

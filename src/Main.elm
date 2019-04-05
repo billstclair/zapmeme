@@ -364,11 +364,13 @@ type ButtonOperation
 type alias Model =
     { meme : Meme
     , selectedPosition : Maybe TextPosition
+    , savedSelectedPosition : Maybe TextPosition
     , showCaptionBorders : Bool
     , maxWidth : Int
     , maxHeight : Int
     , fileName : String
     , inputs : Inputs
+    , showMemeImage : Bool
     , showHelp : Bool
 
     -- Below here is not persistent.
@@ -378,7 +380,9 @@ type alias Model =
     , file : Maybe File
     , triggerImageProperties : Int
     , downloadFile : Maybe File
+    , memeImageUrl : Maybe String
     , triggerReturnedFile : Int
+    , triggerReturnedUrl : Int
     , mimeType : String
     , incrementButton : Button ()
     , decrementButton : Button ()
@@ -501,6 +505,8 @@ type Msg
     | GetReturnedFile
     | ReceiveReturnedFile ReturnedFile
     | ReceiveReturnedBytes Bytes
+    | ReceiveMemeImageUrl String
+    | ShowMemeImage Bool String
     | SetImageUrl String
     | SetMemeImageUrl
     | SetController Controller Bool
@@ -591,7 +597,10 @@ init flags url key =
             , file = Nothing
             , triggerImageProperties = 0
             , downloadFile = Nothing
+            , memeImageUrl = Nothing
             , triggerReturnedFile = 0
+            , triggerReturnedUrl = 0
+            , savedSelectedPosition = Nothing
             , fileName = "meme.jpg"
             , mimeType = "image/jpeg"
             , incrementButton =
@@ -602,6 +611,7 @@ init flags url key =
                 SB.repeatingButton repeatTime
                     buttonPair
                     ()
+            , showMemeImage = False
             , showHelp = False
             , windowSize = ( 2000, 2000 )
             , subscription = Nothing
@@ -1039,10 +1049,13 @@ updateInternal msg model =
                         Just savedModel ->
                             { mdl1
                                 | selectedPosition = savedModel.selectedPosition
+                                , savedSelectedPosition =
+                                    savedModel.savedSelectedPosition
                                 , showCaptionBorders = savedModel.showCaptionBorders
                                 , maxWidth = savedModel.maxWidth
                                 , maxHeight = savedModel.maxHeight
                                 , inputs = savedModel.inputs
+                                , showMemeImage = savedModel.showMemeImage
                                 , showHelp = savedModel.showHelp
                             }
             in
@@ -1071,7 +1084,12 @@ updateInternal msg model =
                                             }
                                     }
                                         |> withCmd
-                                            (get persistenceKeys.model mdl)
+                                            (if not mdl.showMemeImage then
+                                                Cmd.none
+
+                                             else
+                                                get persistenceKeys.shownimageurl mdl
+                                            )
 
         ReceiveModel value ->
             case value of
@@ -1088,7 +1106,16 @@ updateInternal msg model =
                                 |> withNoCmd
 
         GetReturnedFile ->
-            { model | triggerReturnedFile = model.triggerReturnedFile + 1 }
+            { model
+                | triggerReturnedFile = model.triggerReturnedFile + 1
+                , savedSelectedPosition =
+                    if model.showMemeImage then
+                        model.savedSelectedPosition
+
+                    else
+                        model.selectedPosition
+                , selectedPosition = Nothing
+            }
                 |> withNoCmd
 
         ReceiveReturnedFile returnedFile ->
@@ -1098,8 +1125,13 @@ updateInternal msg model =
             in
             { model | downloadFile = Just downloadFile }
                 |> withCmd
-                    (Task.perform ReceiveReturnedBytes <|
-                        File.toBytes downloadFile
+                    (if Debug.log "canDownload" returnedFile.canDownload then
+                        Task.perform ReceiveReturnedBytes <|
+                            File.toBytes downloadFile
+
+                     else
+                        Task.perform ReceiveMemeImageUrl <|
+                            File.toUrl downloadFile
                     )
 
         ReceiveReturnedBytes bytes ->
@@ -1108,12 +1140,47 @@ updateInternal msg model =
                     model |> withNoCmd
 
                 Just file ->
-                    { model | file = Nothing }
+                    { model
+                        | downloadFile = Nothing
+                        , selectedPosition = model.savedSelectedPosition
+                        , savedSelectedPosition = Nothing
+                    }
                         |> withCmd
                             (Download.bytes (File.name file)
                                 (File.mime file)
                                 bytes
                             )
+
+        ReceiveMemeImageUrl url ->
+            { model
+                | downloadFile = Nothing
+                , showMemeImage = True
+                , memeImageUrl = Just url
+            }
+                |> withCmd
+                    (put persistenceKeys.shownimageurl
+                        (Just <| JE.string url)
+                        model
+                    )
+
+        ShowMemeImage show mimeType ->
+            if show then
+                { model
+                    | triggerReturnedUrl = model.triggerReturnedUrl + 1
+                    , mimeType = mimeType
+                    , savedSelectedPosition = model.selectedPosition
+                    , selectedPosition = Nothing
+                }
+                    |> withNoCmd
+
+            else
+                { model
+                    | showMemeImage = False
+                    , savedSelectedPosition = Nothing
+                    , selectedPosition = model.savedSelectedPosition
+                }
+                    |> withCmd
+                        (put persistenceKeys.shownimageurl Nothing model)
 
         SetImageUrl string ->
             { model
@@ -1653,11 +1720,27 @@ view model =
             [ align "center"
             ]
             [ span []
-                [ renderMeme
-                    { scalememe
-                        | scale = scale.scale * scalememe.scale
-                    }
-                    model
+                [ if model.showMemeImage && model.memeImageUrl /= Nothing then
+                    case model.memeImageUrl of
+                        Nothing ->
+                            text ""
+
+                        Just url ->
+                            img
+                                [ src url
+                                , width <| tos scalememe.width ++ "px"
+                                , height <| tos scalememe.height ++ "px"
+                                , alt "Meme image"
+                                , onClick <| ShowMemeImage False ""
+                                ]
+                                []
+
+                  else
+                    renderMeme
+                        { scalememe
+                            | scale = scale.scale * scalememe.scale
+                        }
+                        model
                 , ImageProperties.imageProperties
                     [ ImageProperties.imageId imageId
                     , ImageProperties.triggerImageProperties
@@ -1671,29 +1754,46 @@ view model =
                         model.mimeType
                     , SvgToDataUrl.triggerReturnedFile model.triggerReturnedFile
                     , SvgToDataUrl.onReturnedFile ReceiveReturnedFile
+                    , SvgToDataUrl.returnedUrlParameters svgId model.mimeType
+                    , SvgToDataUrl.triggerReturnedUrl model.triggerReturnedUrl
+                    , SvgToDataUrl.onReturnedUrl
+                        (\returnedUrl ->
+                            ReceiveMemeImageUrl returnedUrl.url
+                        )
                     ]
                     []
                 ]
-            , p []
-                [ button [ onClick AddCaption ]
-                    [ text "Add Caption" ]
-                , case model.selectedPosition of
-                    Nothing ->
-                        text ""
+            , p [] <|
+                List.concat
+                    [ if model.showMemeImage then
+                        [ button [ onClick <| ShowMemeImage False "" ]
+                            [ text "Edit Meme (image shown above)" ]
+                        ]
 
-                    _ ->
-                        button [ onClick DeleteCaption ]
-                            [ text "Delete Caption" ]
-                , case model.deletedCaption of
-                    Nothing ->
-                        text ""
+                      else
+                        [ button [ onClick AddCaption ]
+                            [ text "Add Caption" ]
+                        , case model.selectedPosition of
+                            Nothing ->
+                                text ""
 
-                    _ ->
-                        button [ onClick UndoDeletion ]
-                            [ text "Undo Deletion" ]
-                , br
-                , renderInputs scale scalememe model
-                ]
+                            _ ->
+                                button [ onClick DeleteCaption ]
+                                    [ text "Delete Caption" ]
+                        , case model.deletedCaption of
+                            Nothing ->
+                                text ""
+
+                            _ ->
+                                button [ onClick UndoDeletion ]
+                                    [ text "Undo Deletion" ]
+                        , button [ onClick <| ShowMemeImage True "image/jpeg" ]
+                            [ text "Show Image" ]
+                        ]
+                    , [ br
+                      , renderInputs scale scalememe model
+                      ]
+                    ]
             , button
                 [ onClick ToggleHelp
                 ]
@@ -2621,6 +2721,7 @@ persistenceKeys =
     , memes = "memes"
     , images = "images"
     , imageurls = "imageurls"
+    , shownimageurl = "shownimageurl"
     }
 
 
@@ -2640,10 +2741,12 @@ decodeSubkey fullkey =
 modelToSavedModel : Model -> SavedModel
 modelToSavedModel model =
     { selectedPosition = model.selectedPosition
+    , savedSelectedPosition = model.savedSelectedPosition
     , showCaptionBorders = model.showCaptionBorders
     , maxWidth = model.maxWidth
     , maxHeight = model.maxHeight
     , inputs = model.inputs
+    , showMemeImage = model.showMemeImage
     , showHelp = model.showHelp
     }
 

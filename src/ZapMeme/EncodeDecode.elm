@@ -243,10 +243,19 @@ encodeSavedModel model =
                 Just position ->
                     encodeTextPosition position
           )
+        , ( "savedSelectedPosition"
+          , case model.savedSelectedPosition of
+                Nothing ->
+                    JE.null
+
+                Just position ->
+                    encodeTextPosition position
+          )
         , ( "showCaptionBorders", JE.bool model.showCaptionBorders )
         , ( "maxWidth", JE.int model.maxWidth )
         , ( "maxHeight", JE.int model.maxHeight )
         , ( "inputs", encodeInputs model.inputs )
+        , ( "showMemeImage", JE.bool model.showMemeImage )
         , ( "showHelp", JE.bool model.showHelp )
         ]
 
@@ -260,10 +269,14 @@ savedModelDecoder : Decoder SavedModel
 savedModelDecoder =
     JD.succeed SavedModel
         |> required "selectedPosition" (JD.nullable textPositionDecoder)
+        -- optional because it was added
+        |> optional "savedSelectedPosition" (JD.nullable textPositionDecoder) Nothing
         |> required "showCaptionBorders" JD.bool
         |> required "maxWidth" JD.int
         |> required "maxHeight" JD.int
         |> required "inputs" inputsDecoder
+        -- optional because it was added
+        |> optional "showMemeImage" JD.bool False
         |> required "showHelp" JD.bool
 
 

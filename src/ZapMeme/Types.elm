@@ -105,9 +105,11 @@ That's saved as the "meme" key.
 -}
 type alias SavedModel =
     { selectedPosition : Maybe TextPosition
+    , savedSelectedPosition : Maybe TextPosition
     , showCaptionBorders : Bool
     , maxWidth : Int
     , maxHeight : Int
     , inputs : Inputs
+    , showMemeImage : Bool
     , showHelp : Bool
     }
