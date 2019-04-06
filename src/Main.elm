@@ -57,6 +57,7 @@ import Html.Attributes
         ( align
         , alt
         , checked
+        , class
         , cols
         , colspan
         , disabled
@@ -2353,13 +2354,12 @@ fontOption currentFont font =
 
 helpParagraph : Html msg
 helpParagraph =
-    Markdown.toHtml
-        [ style "width" "60%"
-        , style "text-align" "left"
-
-        --, style "margin" "auto"
-        ]
-        """
+    div [ class "help" ]
+        [ Markdown.toHtml
+            [ style "text-align" "left"
+            , style "margin" "auto"
+            ]
+            """
 You will usually want to choose an image other than the default from
 the "Background" section. "Max Width" and its "Height" are the maximum
 background image size, in pixels. The image will be scaled to fit. The
@@ -2423,6 +2423,7 @@ If you choose an "Outline Color", the text will stand out better from
 the background image. Again, you may enter a custom color. I find
 "impact" and "arial-black" to be the best-looking outlined fonts.
          """
+        ]
 
 
 fontParagraph : Html Msg

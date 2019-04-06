@@ -9,7 +9,7 @@ p {
 
 // add "screen and" ?
 @media (max-width: 450px) {
-    p { width: 360px; }
+    p, div.help { width: 360px; }
 }
 
 p, th, td, button, textarea {
@@ -24,7 +24,7 @@ p, th, td, button, textarea {
 
 @media (min-width: 800px) {
     textarea { width: 680px; }
-    p { width: 720px; }
+    p, div.help { width: 720px; }
 }
 
 @media (min-width: 1000px) {
