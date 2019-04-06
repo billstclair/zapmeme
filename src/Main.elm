@@ -57,6 +57,7 @@ import Html.Attributes
     exposing
         ( align
         , alt
+        , autofocus
         , checked
         , class
         , cols
@@ -425,6 +426,7 @@ initialInputs =
     , width = "75"
     , height = "15"
     , fileName = "meme"
+    , savedMemeName = "meme"
     }
 
 
@@ -501,6 +503,8 @@ type Msg
     | UndoDeletion
     | ToggleHelp
     | SetDialog WhichDialog
+    | SetSavedMemeName String
+    | SaveMeme
     | SetShowCaptionBorders Bool
     | SetText String
     | SelectImageFile
@@ -692,6 +696,7 @@ selectCaption position model =
                         , width = tos caption.width
                         , height = tos caption.height
                         , fileName = model.inputs.fileName
+                        , savedMemeName = model.inputs.savedMemeName
                         }
     in
     { model
@@ -927,6 +932,14 @@ updateInternal msg model =
         SetDialog dialog ->
             { model | dialog = dialog }
                 |> withNoCmd
+
+        SetSavedMemeName name ->
+            { model | inputs = { inputs | savedMemeName = name } }
+                |> withNoCmd
+
+        SaveMeme ->
+            { model | dialog = NoDialog }
+                |> withCmd (putSavedMeme model)
 
         SelectCaption position ->
             selectCaption position model
@@ -1811,9 +1824,7 @@ view model =
                       , renderInputs scale scalememe model
                       ]
                     ]
-            , button
-                [ onClick ToggleHelp
-                ]
+            , button [ onClick ToggleHelp ]
                 [ text <|
                     if model.showHelp then
                         "Hide Help"
@@ -1821,6 +1832,8 @@ view model =
                     else
                         "Show Help"
                 ]
+            , button [ onClick <| SetDialog MemesDialog ]
+                [ text "Memes" ]
             , if model.showHelp then
                 helpParagraph
 
@@ -2749,22 +2762,62 @@ helpDialog model =
         in
         [ div
             [ style "max-height" (tos (h * 3 // 10) ++ "px")
-            , style "overflow-y" "auto"
-            , style "margin" "1em 0 1em 0"
             , style "text-align" "left"
             ]
             [ Markdown.toHtml [] helpText ]
         ]
-    , actionBar =
-        [ button [ onClick <| SetDialog NoDialog ]
-            [ text "Close" ]
-        ]
+    , actionBar = [ dismissDialogButton ]
     }
 
 
-noDialog : Config Msg
-noDialog =
-    Config [] "Nope" [] []
+memesDialog : Model -> Config Msg
+memesDialog model =
+    let
+        inputs =
+            model.inputs
+    in
+    { styles = []
+    , title = "Memes"
+    , content =
+        [ input
+            [ type_ "text"
+            , autofocus True
+            , size 20
+            , onInput SetSavedMemeName
+            , value inputs.savedMemeName
+            ]
+            []
+        , text " "
+        , button
+            [ onClick SaveMeme
+            , disabled <| inputs.savedMemeName == ""
+            ]
+            [ text "Save Meme" ]
+        ]
+    , actionBar = [ dismissDialogButton ]
+    }
+
+
+dismissDialogButton : Html Msg
+dismissDialogButton =
+    button [ onClick <| SetDialog NoDialog ]
+        [ text "Close" ]
+
+
+noDialog : Model -> Config Msg
+noDialog model =
+    let
+        dialog =
+            ED.encodeWhichDialog model.dialog
+                |> JE.encode 0
+    in
+    { styles = []
+    , title = "Missing Dialog Config"
+    , content =
+        [ text <| "You need to define a dialog config for " ++ dialog ]
+    , actionBar =
+        [ dismissDialogButton ]
+    }
 
 
 dialogConfig : Model -> Config Msg
@@ -2773,8 +2826,11 @@ dialogConfig model =
         HelpDialog ->
             helpDialog model
 
+        MemesDialog ->
+            memesDialog model
+
         _ ->
-            noDialog
+            noDialog model
 
 
 
@@ -2891,6 +2947,18 @@ putMeme meme model =
         [ put persistenceKeys.meme (Just value) model
         , Task.perform (MaybePutImageUrl urlHash) <| Task.succeed url
         ]
+
+
+putSavedMeme : Model -> Cmd Msg
+putSavedMeme model =
+    let
+        key =
+            encodeSubkey persistenceKeys.memes model.inputs.savedMemeName
+
+        value =
+            ED.encodeMeme model.meme
+    in
+    put key (Just value) model
 
 
 {-| Plural means there are subkeys, e.g. "memes.<name>","images.<hash>"

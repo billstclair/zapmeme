@@ -15,6 +15,7 @@ module ZapMeme.EncodeDecode exposing
     , decodeSavedModel
     , encodeMeme
     , encodeSavedModel
+    , encodeWhichDialog
     , memeDecoder
     )
 
@@ -355,6 +356,7 @@ encodeInputs inputs =
         , ( "width", JE.string inputs.width )
         , ( "height", JE.string inputs.height )
         , ( "fileName", JE.string inputs.fileName )
+        , ( "savedMemeName", JE.string inputs.savedMemeName )
         ]
 
 
@@ -374,3 +376,4 @@ inputsDecoder =
         |> required "width" JD.string
         |> required "height" JD.string
         |> required "fileName" JD.string
+        |> optional "savedMemeName" JD.string ""

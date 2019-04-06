@@ -74,6 +74,7 @@ type alias Inputs =
     , width : String
     , height : String
     , fileName : String
+    , savedMemeName : String
     }
 
 
