@@ -398,6 +398,7 @@ type alias Model =
     , receivedMeme : Maybe Meme
     , receivedModel : Maybe SavedModel
     , knownImages : Set String
+    , savedMemes : Set String
     , funnelState : PortFunnels.State
     , msg : Maybe String
     }
@@ -505,6 +506,8 @@ type Msg
     | SetDialog WhichDialog
     | SetSavedMemeName String
     | SaveMeme
+    | LoadSavedMeme String
+    | DeleteSavedMeme String
     | SetShowCaptionBorders Bool
     | SetText String
     | SelectImageFile
@@ -542,6 +545,7 @@ type Msg
     | ReceiveMeme (Maybe Value)
     | ReceiveImage String (Maybe Value)
     | ReceiveModel (Maybe Value)
+    | ReceiveKeys (List String)
     | HandleUrlRequest UrlRequest
     | HandleUrlChange Url
     | ProcessLocalStorage Value
@@ -631,6 +635,7 @@ init flags url key =
             , receivedMeme = Nothing
             , receivedModel = Nothing
             , knownImages = Set.empty
+            , savedMemes = Set.empty
             , funnelState = PortFunnels.initialState localStoragePrefix
             , msg = Nothing
             }
@@ -640,6 +645,7 @@ init flags url key =
             [ Task.perform getViewport Dom.getViewport
             , get persistenceKeys.meme model
             , get persistenceKeys.model model
+            , listKeys (persistenceKeys.memes ++ ".") model
             ]
 
 
@@ -938,8 +944,20 @@ updateInternal msg model =
                 |> withNoCmd
 
         SaveMeme ->
-            { model | dialog = NoDialog }
-                |> withCmd (putSavedMeme model)
+            { model
+                | dialog = NoDialog
+                , savedMemes =
+                    Set.insert inputs.savedMemeName model.savedMemes
+            }
+                |> withCmd (putSavedMeme inputs.savedMemeName (Just model.meme) model)
+
+        LoadSavedMeme name ->
+            { model | savedMemes = Set.insert name model.savedMemes }
+                |> withCmd (getSavedMeme name model)
+
+        DeleteSavedMeme name ->
+            { model | savedMemes = Set.remove name model.savedMemes }
+                |> withCmd (putSavedMeme name Nothing model)
 
         SelectCaption position ->
             selectCaption position model
@@ -1117,6 +1135,9 @@ updateInternal msg model =
                         Ok savedModel ->
                             { model | receivedModel = Just savedModel }
                                 |> withNoCmd
+
+        ReceiveKeys keys ->
+            receiveKeys keys model
 
         GetReturnedFile ->
             { model
@@ -1453,6 +1474,18 @@ updateInternal msg model =
                     res
 
 
+receiveKeys : List String -> Model -> ( Model, Cmd Msg )
+receiveKeys keys model =
+    let
+        savedMemes =
+            List.map decodeSubkey keys
+                |> List.map Tuple.second
+                |> List.foldr Set.insert model.savedMemes
+    in
+    { model | savedMemes = savedMemes }
+        |> withNoCmd
+
+
 useInitialMeme : Model -> ( Model, Cmd Msg )
 useInitialMeme model =
     ( { model | meme = initialMeme }
@@ -1602,11 +1635,18 @@ storageHandler response state model =
                 , Task.perform (ReceiveImage subkey) (Task.succeed value)
                 )
 
+            else if pkey == persistenceKeys.memes then
+                ( { model | dialog = NoDialog }
+                , Task.perform ReceiveMeme (Task.succeed value)
+                )
+
             else
                 model |> withNoCmd
 
         LocalStorage.ListKeysResponse { keys } ->
-            model |> withNoCmd
+            ( model
+            , Task.perform ReceiveKeys (Task.succeed keys)
+            )
 
         _ ->
             model |> withNoCmd
@@ -1868,6 +1908,15 @@ thm body =
 th : String -> Html msg
 th string =
     thm [ text string ]
+
+
+thead : String -> Html msg
+thead string =
+    Html.th
+        [ textalign "center"
+        , style "font-weight" "bold"
+        ]
+        [ text string ]
 
 
 textalign : String -> Attribute msg
@@ -2365,7 +2414,7 @@ fontOption currentFont font =
         ]
 
 
-helpParagraph : Html msg
+helpParagraph : Html Msg
 helpParagraph =
     div [ class "help" ]
         [ Markdown.toHtml
@@ -2373,6 +2422,8 @@ helpParagraph =
             , style "margin" "auto"
             ]
             helpText
+        , button [ onClick ToggleHelp ]
+            [ text "Hide Help" ]
         ]
 
 
@@ -2441,6 +2492,10 @@ little red mixed in).
 If you choose an "Outline Color", the text will stand out better from
 the background image. Again, you may enter a custom color. I find
 "impact" and "arial-black" to be the best-looking outlined fonts.
+
+Click "Hide Help" to hide this text, and "Show Help" to show it again.
+
+Click "Memes" to bring up a dialog where you can save the current meme, or load or delete previously saved memes. The "Save Meme" button there will save the current meme with the name in the text box to its left. Clicking an "O" button in the "Load" column will load that meme. Clicking an "X" button in the "Delete" column will delete that meme. The images will remain, so you'll only lose the meme text and sizing information.
          """
 
 
@@ -2775,6 +2830,9 @@ memesDialog model =
     let
         inputs =
             model.inputs
+
+        wouldOverwrite =
+            Set.member inputs.savedMemeName model.savedMemes
     in
     { styles = []
     , title = "Memes"
@@ -2782,7 +2840,7 @@ memesDialog model =
         [ input
             [ type_ "text"
             , autofocus True
-            , size 20
+            , size 40
             , onInput SetSavedMemeName
             , value inputs.savedMemeName
             ]
@@ -2793,9 +2851,45 @@ memesDialog model =
             , disabled <| inputs.savedMemeName == ""
             ]
             [ text "Save Meme" ]
+        , if wouldOverwrite then
+            span []
+                [ br
+                , text "Save will overwrite an existing saved meme."
+                ]
+
+          else
+            text ""
+        , br
+        , br
+        , table
+            []
+            (tr []
+                [ thead "Name"
+                , thead "Load"
+                , thead "Delete"
+                ]
+                :: List.map savedMemeRow (Set.toList model.savedMemes)
+            )
         ]
     , actionBar = [ dismissDialogButton ]
     }
+
+
+savedMemeRow : String -> Html Msg
+savedMemeRow name =
+    tr []
+        [ td [] [ text name ]
+        , td [ align "center" ]
+            [ button
+                [ onClick <| LoadSavedMeme name ]
+                [ text "O" ]
+            ]
+        , td [ align "center" ]
+            [ button
+                [ onClick <| DeleteSavedMeme name ]
+                [ text "X" ]
+            ]
+        ]
 
 
 dismissDialogButton : Html Msg
@@ -2913,6 +3007,11 @@ put key value model =
     localStorageSend (LocalStorage.put key value) model
 
 
+listKeys : String -> Model -> Cmd Msg
+listKeys prefix model =
+    localStorageSend (LocalStorage.listKeys <| Debug.log "listKeys" prefix) model
+
+
 putModel : Model -> Cmd Msg
 putModel model =
     let
@@ -2949,16 +3048,30 @@ putMeme meme model =
         ]
 
 
-putSavedMeme : Model -> Cmd Msg
-putSavedMeme model =
+putSavedMeme : String -> Maybe Meme -> Model -> Cmd Msg
+putSavedMeme name meme model =
     let
         key =
-            encodeSubkey persistenceKeys.memes model.inputs.savedMemeName
+            encodeSubkey persistenceKeys.memes name
 
         value =
-            ED.encodeMeme model.meme
+            case meme of
+                Nothing ->
+                    Nothing
+
+                Just m ->
+                    Just <| ED.encodeMeme m
     in
-    put key (Just value) model
+    put key value model
+
+
+getSavedMeme : String -> Model -> Cmd Msg
+getSavedMeme name model =
+    let
+        key =
+            encodeSubkey persistenceKeys.memes name
+    in
+    get key model
 
 
 {-| Plural means there are subkeys, e.g. "memes.<name>","images.<hash>"
