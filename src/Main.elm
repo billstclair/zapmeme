@@ -1154,7 +1154,7 @@ updateInternal msg model =
         ReceiveMemeImageUrl url ->
             { model
                 | downloadFile = Nothing
-                , showMemeImage = True
+                , showMemeImage = Debug.log "ReceiveMemeImageUrl" True
                 , memeImageUrl = Just url
             }
                 |> withCmd
@@ -1205,6 +1205,15 @@ updateInternal msg model =
                                 , hash = MD5.hex inputs.imageUrl
                             }
                     }
+                , showMemeImage = False
+                , savedSelectedPosition = Nothing
+                , selectedPosition =
+                    if model.showMemeImage then
+                        model.savedSelectedPosition
+
+                    else
+                        model.selectedPosition
+                , triggerImageProperties = model.triggerImageProperties + 1
             }
                 |> withNoCmd
 
@@ -1488,6 +1497,14 @@ receiveImageUrl url model =
                         , hash = MD5.hex url
                     }
             }
+        , showMemeImage = False
+        , savedSelectedPosition = Nothing
+        , selectedPosition =
+            if model.showMemeImage then
+                model.savedSelectedPosition
+
+            else
+                model.selectedPosition
         , triggerImageProperties = model.triggerImageProperties + 1
     }
         |> withNoCmd
@@ -2135,6 +2152,12 @@ renderInputs scale scalememe model =
                 , button [ onClick <| StartDownload "image/png" ".png" ]
                     [ text "PNG" ]
                 ]
+            , if String.startsWith "data:" model.meme.image.url then
+                text ""
+
+              else
+                p []
+                    [ text "Background images specified as URLs will NOT appear in saved images. Upload the image from your computer to prevent this." ]
             ]
         ]
 
@@ -2335,16 +2358,26 @@ helpParagraph =
         , style "text-align" "left"
         ]
         """
-You will usually want to choose an image other than the default from the
-"Background" section. "Max Width" and its "Height" are the maximum
+You will usually want to choose an image other than the default from
+the "Background" section. "Max Width" and its "Height" are the maximum
 background image size, in pixels. The image will be scaled to fit. The
 "JPEG" and "PNG" download buttons will save to you computer an image
-of the completed meme in "File Name", with suitable extension.
+of the completed meme in "File Name", with suitable extension (if your
+browser supports it. On mobile, they will change the image at the top
+of the screen to be an image you can long-tap to save or copy).
+
+If you specify a "URL" for the image, it will NOT appear in saved
+versions. you'll have to do a screen capture to get the meme. This is
+a browser security issue. The fix is to upload the background image
+from your computer.
 
 To add a new caption, click "Add Caption". This will use the text in
 the text input area, just below the "Add Caption" button, a new
 "Position", not occupied by any existing captions, and the other
 settings below "Selected Caption".
+
+To change the image to a JPEG image file you can save or copy, click
+"Show Image". To change it back, click "Edit Meme".
 
 To change an existing caption, click on it. It will be outlined with a
 red, dashed line, and the editing controls will be enabled. To delete
@@ -2371,9 +2404,10 @@ down.
 If "Bold" is checked, most, but not all fonts, will look thicker.
 
 "Font" is one of a selection of safe web fonts, which usually work in
-any browser. I plan to extend this, enabling fonts from Google and
-others, and allowing you to show a subset of the available fonts, if
-you don't expect to use some of them.
+any browser. You may also click on a font in the the "Fonts" list at
+the bottom of the page. I plan to extend this, enabling fonts from
+Google and others, and allowing you to show a subset of the available
+fonts, if you don't expect to use some of them.
 
 "Height" is the height of the font, in percentage of the image
 height. The arrow buttons change this by 1, but you can type a single
@@ -2386,33 +2420,33 @@ little red mixed in).
 If you choose an "Outline Color", the text will stand out better from
 the background image. Again, you may enter a custom color. I find
 "impact" and "arial-black" to be the best-looking outlined fonts.
-
-Next feature: Save the current meme, and allow saving of multiple
-other memes and "Selected Caption" settings, named as you like to help
-you remember them.
          """
 
 
-fontParagraph : Html msg
+fontParagraph : Html Msg
 fontParagraph =
     p [ style "width" "80%" ] <|
         List.concat
             [ [ span
                     [ style "font-size" "110%"
+                    , style "font-weight" "bold"
 
                     --, style "font-weight" "bold"
                     ]
-                    [ text "Fonts" ]
+                    [ text "Fonts (click to select)" ]
               , br
               ]
             , List.map fontExample safeFontList
             ]
 
 
-fontExample : Font -> Html msg
+fontExample : Font -> Html Msg
 fontExample font =
     span []
-        [ span [ fontAttribute font ]
+        [ span
+            [ fontAttribute font
+            , onClick <| SetFont font.font
+            ]
             [ text font.font ]
         , text " "
         ]

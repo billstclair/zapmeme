@@ -34,7 +34,8 @@ customElements.define('image-properties', class extends HTMLElement {
 
   set triggerImageProperties(value) {
     // Don't trigger on first set.
-    var doit = this._triggerImageProperties !== null;
+    var doit = this._triggerImageProperties !== null &&
+        this._triggerImageProperties != value
     this._triggerImageProperties = value;
     if (doit) {
       this._width = -1;
@@ -46,6 +47,10 @@ customElements.define('image-properties', class extends HTMLElement {
       }
 
       var image = this.image
+      if (!image) {
+        return;
+      }
+
       var tagName = image.tagName;
       if (typeof(tagName) == "string") {
         tagName = tagName.toLowerCase();

@@ -11,8 +11,6 @@ This file tracks bugs and ideas for new features.
   Save / Use / Delete
 * Save/Restore persisted data as JSON, with optional compression to Base64.
 * Word-wrap outline font SVG.
-* Make it work well on mobile.
-* Click a font in the list at the bottom of the page to switch to it.
 * More built-in fonts.
 * Edit available fonts, in case you don't want all the supplied ones.
 * Allow import of Google fonts, and maybe some other repositories.
@@ -30,5 +28,3 @@ This file tracks bugs and ideas for new features.
 
 ## Bugs
 
-* Warn the user when they use a URL to specify the background image that it
-  won't appear in the downloaded image file.
