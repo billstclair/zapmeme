@@ -2363,14 +2363,14 @@ helpParagraph =
 You will usually want to choose an image other than the default from
 the "Background" section. "Max Width" and its "Height" are the maximum
 background image size, in pixels. The image will be scaled to fit. The
-"JPEG" and "PNG" download buttons will save to you computer an image
+"JPEG" and "PNG" download buttons will save to your computer an image
 of the completed meme in "File Name", with suitable extension (if your
 browser supports it. On mobile, they will change the image at the top
 of the screen to be an image you can long-tap to save or copy).
 
 If you specify a "URL" for the image, it will NOT appear in saved
 versions. you'll have to do a screen capture to get the meme. This is
-a browser security issue. The fix is to upload the background image
+a browser security issue. The fix is to "Choose" the background image
 from your computer.
 
 To add a new caption, click "Add Caption". This will use the text in
@@ -2642,7 +2642,7 @@ renderCaption wi hi selectedPosition showCaptionBorders fontDict caption =
                     , style "font-size" <| tos fontsize ++ "px"
                     , fill caption.fontcolor
                     , stroke outlineColor
-                    , strokeWidth "1"
+                    , strokeWidth "2"
                     , svgalign caption.alignment
                     ]
                 <|
