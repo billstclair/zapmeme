@@ -30,6 +30,7 @@ import ZapMeme.Types
         , SavedModel
         , TextAlignment(..)
         , TextPosition(..)
+        , WhichDialog(..)
         )
 
 
@@ -232,10 +233,59 @@ textAlignmentHelp s =
             JD.fail <| "Unknown TextAlignment: " ++ s
 
 
+encodeWhichDialog : WhichDialog -> Value
+encodeWhichDialog dialog =
+    case dialog of
+        NoDialog ->
+            JE.string "NoDialog"
+
+        MemesDialog ->
+            JE.string "MemesDialog"
+
+        HelpDialog ->
+            JE.string "HelpDialog"
+
+        ImagesDialog ->
+            JE.string "ImagesDialog"
+
+        FontsDialog ->
+            JE.string "FontsDialog"
+
+        DataDialog ->
+            JE.string "DataDialog"
+
+
+whichDialogDecoder : Decoder WhichDialog
+whichDialogDecoder =
+    JD.string
+        |> JD.andThen
+            (\s ->
+                case s of
+                    "HelpDialog" ->
+                        JD.succeed HelpDialog
+
+                    "MemesDialog" ->
+                        JD.succeed MemesDialog
+
+                    "ImagesDialog" ->
+                        JD.succeed ImagesDialog
+
+                    "FontsDialog" ->
+                        JD.succeed FontsDialog
+
+                    "DataDialog" ->
+                        JD.succeed DataDialog
+
+                    _ ->
+                        JD.succeed NoDialog
+            )
+
+
 encodeSavedModel : SavedModel -> Value
 encodeSavedModel model =
     JE.object
-        [ ( "selectedPosition"
+        [ ( "dialog", encodeWhichDialog model.dialog )
+        , ( "selectedPosition"
           , case model.selectedPosition of
                 Nothing ->
                     JE.null
@@ -265,17 +315,18 @@ decodeSavedModel value =
     JD.decodeValue savedModelDecoder value
 
 
+{-| Optional fields below were added after the code shipped without them.
+-}
 savedModelDecoder : Decoder SavedModel
 savedModelDecoder =
     JD.succeed SavedModel
+        |> optional "dialog" whichDialogDecoder NoDialog
         |> required "selectedPosition" (JD.nullable textPositionDecoder)
-        -- optional because it was added
         |> optional "savedSelectedPosition" (JD.nullable textPositionDecoder) Nothing
         |> required "showCaptionBorders" JD.bool
         |> required "maxWidth" JD.int
         |> required "maxHeight" JD.int
         |> required "inputs" inputsDecoder
-        -- optional because it was added
         |> optional "showMemeImage" JD.bool False
         |> required "showHelp" JD.bool
 

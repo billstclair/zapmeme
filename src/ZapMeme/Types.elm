@@ -19,6 +19,7 @@ module ZapMeme.Types exposing
     , SavedModel
     , TextAlignment(..)
     , TextPosition(..)
+    , WhichDialog(..)
     )
 
 {-| fontsize, width, and height are percentages of the image size
@@ -98,13 +99,23 @@ type alias Font =
     }
 
 
+type WhichDialog
+    = NoDialog
+    | HelpDialog
+    | MemesDialog
+    | ImagesDialog
+    | FontsDialog
+    | DataDialog
+
+
 {-| This does not include the current meme.
 
 That's saved as the "meme" key.
 
 -}
 type alias SavedModel =
-    { selectedPosition : Maybe TextPosition
+    { dialog : WhichDialog
+    , selectedPosition : Maybe TextPosition
     , savedSelectedPosition : Maybe TextPosition
     , showCaptionBorders : Bool
     , maxWidth : Int

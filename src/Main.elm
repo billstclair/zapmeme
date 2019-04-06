@@ -20,6 +20,7 @@ import Bytes exposing (Bytes)
 import Cmd.Extra exposing (withCmd, withCmds, withNoCmd)
 import CustomElement.ImageProperties as ImageProperties exposing (ImageProperties)
 import CustomElement.SvgToDataUrl as SvgToDataUrl exposing (ReturnedFile, ReturnedUrl)
+import Dialog exposing (Config, Visible)
 import Dict exposing (Dict)
 import File exposing (File)
 import File.Download as Download
@@ -124,6 +125,7 @@ import ZapMeme.Types
         , SavedModel
         , TextAlignment(..)
         , TextPosition(..)
+        , WhichDialog(..)
         )
 
 
@@ -364,6 +366,7 @@ type ButtonOperation
 
 type alias Model =
     { meme : Meme
+    , dialog : WhichDialog
     , selectedPosition : Maybe TextPosition
     , savedSelectedPosition : Maybe TextPosition
     , showCaptionBorders : Bool
@@ -497,6 +500,7 @@ type Msg
     | DeleteCaption
     | UndoDeletion
     | ToggleHelp
+    | SetDialog WhichDialog
     | SetShowCaptionBorders Bool
     | SetText String
     | SelectImageFile
@@ -588,6 +592,7 @@ init flags url key =
     let
         model =
             { meme = emptyMeme
+            , dialog = NoDialog
             , deletedCaption = Nothing
             , selectedPosition = Nothing
             , showCaptionBorders = False
@@ -919,6 +924,10 @@ updateInternal msg model =
             { model | showHelp = not model.showHelp }
                 |> withNoCmd
 
+        SetDialog dialog ->
+            { model | dialog = dialog }
+                |> withNoCmd
+
         SelectCaption position ->
             selectCaption position model
 
@@ -1048,17 +1057,7 @@ updateInternal msg model =
                             mdl1
 
                         Just savedModel ->
-                            { mdl1
-                                | selectedPosition = savedModel.selectedPosition
-                                , savedSelectedPosition =
-                                    savedModel.savedSelectedPosition
-                                , showCaptionBorders = savedModel.showCaptionBorders
-                                , maxWidth = savedModel.maxWidth
-                                , maxHeight = savedModel.maxHeight
-                                , inputs = savedModel.inputs
-                                , showMemeImage = savedModel.showMemeImage
-                                , showHelp = savedModel.showHelp
-                            }
+                            savedModelToModel savedModel mdl1
             in
             case Debug.log "ReceiveImage" value of
                 Nothing ->
@@ -1838,6 +1837,7 @@ view model =
                     ]
                     [ text "GitHub" ]
                 ]
+            , Dialog.render (dialogConfig model) (model.dialog /= NoDialog)
             ]
         ]
     }
@@ -2359,7 +2359,13 @@ helpParagraph =
             [ style "text-align" "left"
             , style "margin" "auto"
             ]
-            """
+            helpText
+        ]
+
+
+helpText : String
+helpText =
+    """
 You will usually want to choose an image other than the default from
 the "Background" section. "Max Width" and its "Height" are the maximum
 background image size, in pixels. The image will be scaled to fit. The
@@ -2423,7 +2429,6 @@ If you choose an "Outline Color", the text will stand out better from
 the background image. Again, you may enter a custom color. I find
 "impact" and "arial-black" to be the best-looking outlined fonts.
          """
-        ]
 
 
 fontParagraph : Html Msg
@@ -2728,6 +2733,51 @@ cdr list =
 
 
 
+{- Dialogs -}
+
+
+{-| Not currently used. Shown inline.
+-}
+helpDialog : Model -> Config Msg
+helpDialog model =
+    { styles = []
+    , title = "Help"
+    , content =
+        let
+            ( _, h ) =
+                model.windowSize
+        in
+        [ div
+            [ style "max-height" (tos (h * 3 // 10) ++ "px")
+            , style "overflow-y" "auto"
+            , style "margin" "1em 0 1em 0"
+            , style "text-align" "left"
+            ]
+            [ Markdown.toHtml [] helpText ]
+        ]
+    , actionBar =
+        [ button [ onClick <| SetDialog NoDialog ]
+            [ text "Close" ]
+        ]
+    }
+
+
+noDialog : Config Msg
+noDialog =
+    Config [] "Nope" [] []
+
+
+dialogConfig : Model -> Config Msg
+dialogConfig model =
+    case model.dialog of
+        HelpDialog ->
+            helpDialog model
+
+        _ ->
+            noDialog
+
+
+
 {-
 
       Persistence
@@ -2750,18 +2800,6 @@ localStoragePrefix =
     "zapmeme"
 
 
-{-| Plural means there are subkeys, e.g. "memes.<name>","images.<hash>"
--}
-persistenceKeys =
-    { model = "model"
-    , meme = "meme"
-    , memes = "memes"
-    , images = "images"
-    , imageurls = "imageurls"
-    , shownimageurl = "shownimageurl"
-    }
-
-
 encodeSubkey : String -> String -> String
 encodeSubkey key subkey =
     key ++ "." ++ subkey
@@ -2777,7 +2815,8 @@ decodeSubkey fullkey =
 
 modelToSavedModel : Model -> SavedModel
 modelToSavedModel model =
-    { selectedPosition = model.selectedPosition
+    { dialog = model.dialog
+    , selectedPosition = model.selectedPosition
     , savedSelectedPosition = model.savedSelectedPosition
     , showCaptionBorders = model.showCaptionBorders
     , maxWidth = model.maxWidth
@@ -2785,6 +2824,22 @@ modelToSavedModel model =
     , inputs = model.inputs
     , showMemeImage = model.showMemeImage
     , showHelp = model.showHelp
+    }
+
+
+savedModelToModel : SavedModel -> Model -> Model
+savedModelToModel savedModel model =
+    { model
+        | dialog = savedModel.dialog
+        , selectedPosition = savedModel.selectedPosition
+        , savedSelectedPosition =
+            savedModel.savedSelectedPosition
+        , showCaptionBorders = savedModel.showCaptionBorders
+        , maxWidth = savedModel.maxWidth
+        , maxHeight = savedModel.maxHeight
+        , inputs = savedModel.inputs
+        , showMemeImage = savedModel.showMemeImage
+        , showHelp = savedModel.showHelp
     }
 
 
@@ -2836,3 +2891,15 @@ putMeme meme model =
         [ put persistenceKeys.meme (Just value) model
         , Task.perform (MaybePutImageUrl urlHash) <| Task.succeed url
         ]
+
+
+{-| Plural means there are subkeys, e.g. "memes.<name>","images.<hash>"
+-}
+persistenceKeys =
+    { model = "model"
+    , meme = "meme"
+    , memes = "memes"
+    , images = "images"
+    , imageurls = "imageurls"
+    , shownimageurl = "shownimageurl"
+    }

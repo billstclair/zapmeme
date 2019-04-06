@@ -8,6 +8,7 @@
         "direct": {
             "Janiczek/cmd-extra": "1.1.0",
             "NoRedInk/elm-json-decode-pipeline": "1.0.0",
+            "billstclair/elm-dialog": "1.0.1",
             "billstclair/elm-localstorage": "6.0.3",
             "billstclair/elm-port-funnel": "1.1.4",
             "billstclair/elm-svg-button": "3.0.0",
@@ -28,13 +29,14 @@
         "indirect": {
             "elm/virtual-dom": "1.0.2",
             "elm-community/dict-extra": "2.4.0",
-            "ktonon/elm-word": "2.1.2",
             "myrho/elm-round": "1.0.4",
             "zwilias/elm-utf-tools": "2.0.1"
         }
     },
     "test-dependencies": {
         "direct": {},
-        "indirect": {}
+        "indirect": {
+            "ktonon/elm-word": "2.1.2"
+        }
     }
 }

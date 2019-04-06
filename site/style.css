@@ -1,3 +1,8 @@
+.mdl-dialog__title {
+    font-weight: bold;
+    font-size: 140%;
+}
+
 textarea {
     width: calc(85vw - 45px);
     height: 80px;
