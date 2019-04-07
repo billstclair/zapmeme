@@ -398,7 +398,9 @@ type alias Model =
     , receivedMeme : Maybe Meme
     , receivedModel : Maybe SavedModel
     , knownImages : Set String
+    , images : Dict String Image
     , savedMemes : Set String
+    , imageMemes : Dict String (List Meme)
     , funnelState : PortFunnels.State
     , msg : Maybe String
     }
@@ -508,6 +510,7 @@ type Msg
     | SaveMeme
     | LoadSavedMeme String
     | DeleteSavedMeme String
+    | DeleteSavedImage String
     | SetShowCaptionBorders Bool
     | SetText String
     | SelectImageFile
@@ -635,7 +638,9 @@ init flags url key =
             , receivedMeme = Nothing
             , receivedModel = Nothing
             , knownImages = Set.empty
+            , images = Dict.empty
             , savedMemes = Set.empty
+            , imageMemes = Dict.empty
             , funnelState = PortFunnels.initialState localStoragePrefix
             , msg = Nothing
             }
@@ -958,6 +963,10 @@ updateInternal msg model =
         DeleteSavedMeme name ->
             { model | savedMemes = Set.remove name model.savedMemes }
                 |> withCmd (putSavedMeme name Nothing model)
+
+        DeleteSavedImage hash ->
+            -- TODO
+            model |> withNoCmd
 
         SelectCaption position ->
             selectCaption position model
@@ -2889,6 +2898,62 @@ savedMemeRow name =
                 [ onClick <| DeleteSavedMeme name ]
                 [ text "X" ]
             ]
+        ]
+
+
+{-| This doesn't work yet.
+
+We really need saved thumbnails to avoid displaying and reducing 100
+large data urls.
+
+-}
+imagesDialog : Model -> Config Msg
+imagesDialog model =
+    let
+        inputs =
+            model.inputs
+
+        images =
+            model.images
+
+        imageList =
+            Dict.toList images
+                |> List.map Tuple.second
+    in
+    { styles = []
+    , title = "Images"
+    , content =
+        [ table
+            []
+            (tr []
+                [ thead "Image"
+                , thead "Delete"
+                , thead "Memes"
+                ]
+                :: List.map (savedImageRow model) imageList
+            )
+        ]
+    , actionBar = [ dismissDialogButton ]
+    }
+
+
+savedImageRow : Model -> Image -> Html Msg
+savedImageRow name image =
+    tr []
+        [ td []
+            [ img
+                [ src image.url
+                , alt image.hash
+                , width "100px"
+                ]
+                []
+            ]
+        , td [ align "center" ]
+            [ button
+                [ onClick <| DeleteSavedImage image.hash ]
+                [ text "X" ]
+            ]
+        , td [] [ text "TODO" ]
         ]
 
 
