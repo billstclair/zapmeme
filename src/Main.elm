@@ -3147,5 +3147,6 @@ persistenceKeys =
     , memes = "memes"
     , images = "images"
     , imageurls = "imageurls"
+    , smallimageurls = "smallimageurls"
     , shownimageurl = "shownimageurl"
     }
