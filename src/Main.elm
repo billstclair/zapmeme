@@ -399,6 +399,10 @@ type alias Model =
     , receivedModel : Maybe SavedModel
     , knownImages : Set String
     , images : Dict String Image
+    , thumbnails : Dict String Image
+    , thumbnailImageUrl : String
+    , triggerThumbnailProperties : Int
+    , neededThumbnails : List String
     , savedMemes : Set String
     , imageMemes : Dict String (List Meme)
     , funnelState : PortFunnels.State
@@ -506,6 +510,7 @@ type Msg
     | UndoDeletion
     | ToggleHelp
     | SetDialog WhichDialog
+    | SetImagesDialog
     | SetSavedMemeName String
     | SaveMeme
     | LoadSavedMeme String
@@ -548,7 +553,11 @@ type Msg
     | ReceiveMeme (Maybe Value)
     | ReceiveImage String (Maybe Value)
     | ReceiveModel (Maybe Value)
-    | ReceiveKeys (List String)
+    | ReceiveMemeKeys (List String)
+    | ReceiveImageUrls (List String)
+    | ReceiveThumbnail String (Maybe Value)
+    | ReceiveImageForThumbnail String (Maybe Value)
+    | ReceiveThumbnailProperties ImageProperties
     | HandleUrlRequest UrlRequest
     | HandleUrlChange Url
     | ProcessLocalStorage Value
@@ -639,6 +648,10 @@ init flags url key =
             , receivedModel = Nothing
             , knownImages = Set.empty
             , images = Dict.empty
+            , thumbnails = Dict.empty
+            , thumbnailImageUrl = ""
+            , triggerThumbnailProperties = 0
+            , neededThumbnails = []
             , savedMemes = Set.empty
             , imageMemes = Dict.empty
             , funnelState = PortFunnels.initialState localStoragePrefix
@@ -944,6 +957,10 @@ updateInternal msg model =
             { model | dialog = dialog }
                 |> withNoCmd
 
+        SetImagesDialog ->
+            { model | dialog = ImagesDialog }
+                |> withCmd (listImages model)
+
         SetSavedMemeName name ->
             { model | inputs = { inputs | savedMemeName = name } }
                 |> withNoCmd
@@ -1145,8 +1162,77 @@ updateInternal msg model =
                             { model | receivedModel = Just savedModel }
                                 |> withNoCmd
 
-        ReceiveKeys keys ->
-            receiveKeys keys model
+        ReceiveMemeKeys keys ->
+            receiveMemeKeys keys model
+
+        ReceiveImageUrls keys ->
+            let
+                urls =
+                    List.map decodeSubkey keys
+                        |> List.map Tuple.second
+            in
+            { model
+                | knownImages =
+                    Set.fromList <| Debug.log "ReveiveImageUrls" urls
+            }
+                |> loadThumbnails
+
+        ReceiveThumbnail hash value ->
+            case value of
+                Just v ->
+                    case JD.decodeValue JD.string v of
+                        Err _ ->
+                            loadNextThumbnail model
+
+                        Ok url ->
+                            let
+                                image =
+                                    { url = url, hash = hash }
+                            in
+                            { model
+                                | thumbnails =
+                                    Dict.insert hash image model.thumbnails
+                            }
+                                |> loadNextThumbnail
+
+                Nothing ->
+                    -- No thumbnail exists, need to create one
+                    -- Start by loading the image URL.
+                    -- Will continue at ReceiveImageForThumbnail
+                    ( model
+                    , getLabeled imageForThumbnailLabel
+                        (encodeSubkey persistenceKeys.imageurls hash)
+                        model
+                    )
+
+        ReceiveImageForThumbnail hash value ->
+            case value of
+                Nothing ->
+                    loadNextThumbnail model
+
+                Just v ->
+                    case JD.decodeValue JD.string v of
+                        Err _ ->
+                            loadNextThumbnail model
+
+                        Ok url ->
+                            -- Got the image. Need to compute its size
+                            -- Will continue at ReceiveThumbnailProperties
+                            { model
+                                | thumbnailImageUrl = url
+                                , triggerThumbnailProperties =
+                                    model.triggerThumbnailProperties + 1
+                            }
+                                |> withNoCmd
+
+        ReceiveThumbnailProperties properties ->
+            let
+                props =
+                    Debug.log "ReceiveThumbnailProperties" properties
+            in
+            -- TODO
+            { model | thumbnailImageUrl = "" }
+                |> loadNextThumbnail
 
         GetReturnedFile ->
             { model
@@ -1483,8 +1569,39 @@ updateInternal msg model =
                     res
 
 
-receiveKeys : List String -> Model -> ( Model, Cmd Msg )
-receiveKeys keys model =
+loadThumbnails : Model -> ( Model, Cmd Msg )
+loadThumbnails model =
+    let
+        neededThumbnails =
+            Debug.log "neededThumbnails"
+                (Dict.keys model.thumbnails
+                    |> Set.fromList
+                    |> Set.diff model.knownImages
+                    |> Set.toList
+                )
+    in
+    case neededThumbnails of
+        [] ->
+            model |> withNoCmd
+
+        hash :: rest ->
+            { model | neededThumbnails = rest }
+                |> withCmd (getThumbnail hash model)
+
+
+loadNextThumbnail : Model -> ( Model, Cmd Msg )
+loadNextThumbnail model =
+    case model.neededThumbnails of
+        [] ->
+            model |> withNoCmd
+
+        hash :: tail ->
+            { model | neededThumbnails = tail }
+                |> withCmd (getThumbnail hash model)
+
+
+receiveMemeKeys : List String -> Model -> ( Model, Cmd Msg )
+receiveMemeKeys keys model =
     let
         savedMemes =
             List.map decodeSubkey keys
@@ -1619,42 +1736,65 @@ localStorageSend message model =
 storageHandler : LocalStorage.Response -> PortFunnels.State -> Model -> ( Model, Cmd Msg )
 storageHandler response state model =
     case Debug.log "storageHandler" response of
-        LocalStorage.GetResponse { key, value } ->
+        LocalStorage.GetResponse { label, key, value } ->
             let
                 ( pkey, subkey ) =
                     decodeSubkey key
             in
             if pkey == persistenceKeys.images then
+                -- images exists flag, indexed as "images.<hash>"
                 ( model
                 , Task.perform (ReceiveImageKey subkey) (Task.succeed value)
                 )
 
             else if pkey == persistenceKeys.meme then
+                -- current Meme, indexed as "meme>"
                 ( model
                 , Task.perform ReceiveMeme (Task.succeed value)
                 )
 
             else if pkey == persistenceKeys.model then
+                -- SavedModel, indexed as "model"
                 ( model
                 , Task.perform ReceiveModel (Task.succeed value)
                 )
 
             else if pkey == persistenceKeys.imageurls then
+                -- "data:..." URL for image, indexes as "imageurls.<hash>"
                 ( model
-                , Task.perform (ReceiveImage subkey) (Task.succeed value)
+                , if Just imageForThumbnailLabel == label then
+                    Task.perform (ReceiveImageForThumbnail subkey)
+                        (Task.succeed value)
+
+                  else
+                    Task.perform (ReceiveImage subkey) (Task.succeed value)
                 )
 
             else if pkey == persistenceKeys.memes then
+                -- Meme, indexed as "memes.<saved name>"
                 ( { model | dialog = NoDialog }
                 , Task.perform ReceiveMeme (Task.succeed value)
+                )
+
+            else if pkey == persistenceKeys.thumbnails then
+                -- "data:..." URL, indexed as "thumbnails.<hash>"
+                ( model
+                , Task.perform (ReceiveThumbnail subkey) (Task.succeed value)
                 )
 
             else
                 model |> withNoCmd
 
-        LocalStorage.ListKeysResponse { keys } ->
+        LocalStorage.ListKeysResponse { label, keys } ->
             ( model
-            , Task.perform ReceiveKeys (Task.succeed keys)
+            , Task.succeed keys
+                |> Task.perform
+                    (if label == Just listImageUrlsLabel then
+                        ReceiveImageUrls
+
+                     else
+                        ReceiveMemeKeys
+                    )
             )
 
         _ ->
@@ -1820,6 +1960,24 @@ view model =
                             | scale = scale.scale * scalememe.scale
                         }
                         model
+                , case model.thumbnailImageUrl of
+                    "" ->
+                        text ""
+
+                    url ->
+                        svg
+                            [ Svg.Attributes.id thumbnailSvgId
+                            , width thumbnailImageWidth
+                            , height thumbnailImageHeight
+                            ]
+                            [ Svg.Lazy.lazy renderThumbnailImage url ]
+                , ImageProperties.imageProperties
+                    [ ImageProperties.imageId thumbnailImageId
+                    , ImageProperties.triggerImageProperties
+                        model.triggerThumbnailProperties
+                    , ImageProperties.onImageProperties ReceiveThumbnailProperties
+                    ]
+                    []
                 , ImageProperties.imageProperties
                     [ ImageProperties.imageId imageId
                     , ImageProperties.triggerImageProperties
@@ -1883,6 +2041,8 @@ view model =
                 ]
             , button [ onClick <| SetDialog MemesDialog ]
                 [ text "Memes" ]
+            , button [ onClick <| SetImagesDialog ]
+                [ text "Images" ]
             , if model.showHelp then
                 helpParagraph
 
@@ -2608,6 +2768,27 @@ renderSvgImage wi hi url =
         []
 
 
+thumbnailImageWidth : String
+thumbnailImageWidth =
+    "200"
+
+
+thumbnailImageHeight : String
+thumbnailImageHeight =
+    "150"
+
+
+renderThumbnailImage : String -> Svg Msg
+renderThumbnailImage url =
+    Svg.image
+        [ Svg.Attributes.id thumbnailImageId
+        , width thumbnailImageWidth
+        , height thumbnailImageHeight
+        , xlinkHref url
+        ]
+        []
+
+
 tos : Int -> String
 tos int =
     String.fromInt int
@@ -2779,6 +2960,16 @@ svgId =
 imageId : String
 imageId =
     "meme-image"
+
+
+thumbnailSvgId : String
+thumbnailSvgId =
+    "thumbnail-svg"
+
+
+thumbnailImageId : String
+thumbnailImageId =
+    "thumbnail-image"
 
 
 fontSizeLocale : Locale
@@ -2988,6 +3179,9 @@ dialogConfig model =
         MemesDialog ->
             memesDialog model
 
+        ImagesDialog ->
+            imagesDialog model
+
         _ ->
             noDialog model
 
@@ -3063,6 +3257,15 @@ get key model =
     localStorageSend (LocalStorage.get <| Debug.log "get" key) model
 
 
+getLabeled : String -> String -> Model -> Cmd Msg
+getLabeled label key model =
+    localStorageSend
+        (LocalStorage.getLabeled label <|
+            Debug.log ("getLabeled " ++ label) key
+        )
+        model
+
+
 put : String -> Maybe Value -> Model -> Cmd Msg
 put key value model =
     let
@@ -3075,6 +3278,15 @@ put key value model =
 listKeys : String -> Model -> Cmd Msg
 listKeys prefix model =
     localStorageSend (LocalStorage.listKeys <| Debug.log "listKeys" prefix) model
+
+
+listKeysLabeled : String -> String -> Model -> Cmd Msg
+listKeysLabeled label prefix model =
+    localStorageSend
+        (LocalStorage.listKeysLabeled label <|
+            Debug.log ("listKeysLabeled " ++ label) prefix
+        )
+        model
 
 
 putModel : Model -> Cmd Msg
@@ -3139,6 +3351,32 @@ getSavedMeme name model =
     get key model
 
 
+listImages : Model -> Cmd Msg
+listImages model =
+    listKeysLabeled listImageUrlsLabel
+        (persistenceKeys.imageurls ++ ".")
+        model
+
+
+getThumbnail : String -> Model -> Cmd Msg
+getThumbnail hash model =
+    let
+        key =
+            encodeSubkey persistenceKeys.thumbnails hash
+    in
+    get key model
+
+
+imageForThumbnailLabel : String
+imageForThumbnailLabel =
+    "imageForThumbnail"
+
+
+listImageUrlsLabel : String
+listImageUrlsLabel =
+    "listImageUrls"
+
+
 {-| Plural means there are subkeys, e.g. "memes.<name>","images.<hash>"
 -}
 persistenceKeys =
@@ -3147,6 +3385,6 @@ persistenceKeys =
     , memes = "memes"
     , images = "images"
     , imageurls = "imageurls"
-    , smallimageurls = "smallimageurls"
+    , thumbnails = "thumbnails"
     , shownimageurl = "shownimageurl"
     }
