@@ -401,7 +401,10 @@ type alias Model =
     , images : Dict String Image
     , thumbnails : Dict String Image
     , thumbnailImageUrl : String
+    , thumbnailImageHash : String
+    , thumbnailImageSize : ( Int, Int )
     , triggerThumbnailProperties : Int
+    , triggerThumbnailUrl : Int
     , neededThumbnails : List String
     , savedMemes : Set String
     , imageMemes : Dict String (List Meme)
@@ -558,6 +561,10 @@ type Msg
     | ReceiveThumbnail String (Maybe Value)
     | ReceiveImageForThumbnail String (Maybe Value)
     | ReceiveThumbnailProperties ImageProperties
+    | GetThumbnailUrl ()
+    | ReceiveThumbnailUrl String
+    | GetImageFromDialog String
+    | ReceiveImageFromDialog String (Maybe Value)
     | HandleUrlRequest UrlRequest
     | HandleUrlChange Url
     | ProcessLocalStorage Value
@@ -650,7 +657,10 @@ init flags url key =
             , images = Dict.empty
             , thumbnails = Dict.empty
             , thumbnailImageUrl = ""
+            , thumbnailImageHash = ""
+            , thumbnailImageSize = ( 0, 0 )
             , triggerThumbnailProperties = 0
+            , triggerThumbnailUrl = 0
             , neededThumbnails = []
             , savedMemes = Set.empty
             , imageMemes = Dict.empty
@@ -974,7 +984,10 @@ updateInternal msg model =
                 |> withCmd (putSavedMeme inputs.savedMemeName (Just model.meme) model)
 
         LoadSavedMeme name ->
-            { model | savedMemes = Set.insert name model.savedMemes }
+            { model
+                | savedMemes = Set.insert name model.savedMemes
+                , showMemeImage = False
+            }
                 |> withCmd (getSavedMeme name model)
 
         DeleteSavedMeme name ->
@@ -1160,7 +1173,13 @@ updateInternal msg model =
 
                         Ok savedModel ->
                             { model | receivedModel = Just savedModel }
-                                |> withNoCmd
+                                |> withCmd
+                                    (if savedModel.dialog == ImagesDialog then
+                                        listImages model
+
+                                     else
+                                        Cmd.none
+                                    )
 
         ReceiveMemeKeys keys ->
             receiveMemeKeys keys model
@@ -1220,6 +1239,9 @@ updateInternal msg model =
                             -- Will continue at ReceiveThumbnailProperties
                             { model
                                 | thumbnailImageUrl = url
+                                , thumbnailImageHash = hash
+                                , thumbnailImageSize =
+                                    ( thumbnailImageWidth, thumbnailImageHeight )
                                 , triggerThumbnailProperties =
                                     model.triggerThumbnailProperties + 1
                             }
@@ -1229,10 +1251,70 @@ updateInternal msg model =
             let
                 props =
                     Debug.log "ReceiveThumbnailProperties" properties
+
+                w =
+                    props.width * thumbnailScaledHeight // props.height
             in
-            -- TODO
-            { model | thumbnailImageUrl = "" }
-                |> loadNextThumbnail
+            { model
+                | thumbnailImageSize = ( w, thumbnailScaledHeight )
+            }
+                -- Need to delay to let the Svg draw
+                |> withCmd (Task.perform GetThumbnailUrl <| Task.succeed ())
+
+        GetThumbnailUrl _ ->
+            { model
+              -- The action continues at ReceiveThumbnailUrl
+                | triggerThumbnailUrl = model.triggerThumbnailUrl + 1
+            }
+                |> withNoCmd
+
+        ReceiveThumbnailUrl url ->
+            let
+                hash =
+                    model.thumbnailImageHash
+
+                image =
+                    { url = url, hash = hash }
+
+                ( mdl, cmd ) =
+                    { model | thumbnails = Dict.insert hash image model.thumbnails }
+                        |> loadNextThumbnail
+            in
+            mdl |> withCmds [ cmd, putThumbnail hash url mdl ]
+
+        GetImageFromDialog hash ->
+            model
+                |> withCmd
+                    (getLabeled imageFromDialogLabel
+                        (encodeSubkey persistenceKeys.imageurls hash)
+                        model
+                    )
+
+        ReceiveImageFromDialog hash value ->
+            case value of
+                Nothing ->
+                    model |> withNoCmd
+
+                Just v ->
+                    case JD.decodeValue JD.string v of
+                        Err _ ->
+                            model |> withNoCmd
+
+                        Ok url ->
+                            let
+                                meme =
+                                    model.meme
+
+                                image =
+                                    { url = url, hash = hash }
+                            in
+                            { model
+                                | meme = { meme | image = image }
+                                , triggerImageProperties =
+                                    model.triggerImageProperties + 1
+                                , dialog = NoDialog
+                            }
+                                |> withNoCmd
 
         GetReturnedFile ->
             { model
@@ -1593,7 +1675,7 @@ loadNextThumbnail : Model -> ( Model, Cmd Msg )
 loadNextThumbnail model =
     case model.neededThumbnails of
         [] ->
-            model |> withNoCmd
+            { model | thumbnailImageUrl = "" } |> withNoCmd
 
         hash :: tail ->
             { model | neededThumbnails = tail }
@@ -1764,6 +1846,10 @@ storageHandler response state model =
                 ( model
                 , if Just imageForThumbnailLabel == label then
                     Task.perform (ReceiveImageForThumbnail subkey)
+                        (Task.succeed value)
+
+                  else if Just imageFromDialogLabel == label then
+                    Task.perform (ReceiveImageFromDialog subkey)
                         (Task.succeed value)
 
                   else
@@ -1960,45 +2046,6 @@ view model =
                             | scale = scale.scale * scalememe.scale
                         }
                         model
-                , case model.thumbnailImageUrl of
-                    "" ->
-                        text ""
-
-                    url ->
-                        svg
-                            [ Svg.Attributes.id thumbnailSvgId
-                            , width thumbnailImageWidth
-                            , height thumbnailImageHeight
-                            ]
-                            [ Svg.Lazy.lazy renderThumbnailImage url ]
-                , ImageProperties.imageProperties
-                    [ ImageProperties.imageId thumbnailImageId
-                    , ImageProperties.triggerImageProperties
-                        model.triggerThumbnailProperties
-                    , ImageProperties.onImageProperties ReceiveThumbnailProperties
-                    ]
-                    []
-                , ImageProperties.imageProperties
-                    [ ImageProperties.imageId imageId
-                    , ImageProperties.triggerImageProperties
-                        model.triggerImageProperties
-                    , ImageProperties.onImageProperties ReceiveImageProperties
-                    ]
-                    []
-                , SvgToDataUrl.svgToDataUrl
-                    [ SvgToDataUrl.returnedFileParameters svgId
-                        model.fileName
-                        model.mimeType
-                    , SvgToDataUrl.triggerReturnedFile model.triggerReturnedFile
-                    , SvgToDataUrl.onReturnedFile ReceiveReturnedFile
-                    , SvgToDataUrl.returnedUrlParameters svgId model.mimeType
-                    , SvgToDataUrl.triggerReturnedUrl model.triggerReturnedUrl
-                    , SvgToDataUrl.onReturnedUrl
-                        (\returnedUrl ->
-                            ReceiveMemeImageUrl returnedUrl.url
-                        )
-                    ]
-                    []
                 ]
             , p [] <|
                 List.concat
@@ -2043,6 +2090,23 @@ view model =
                 [ text "Memes" ]
             , button [ onClick <| SetImagesDialog ]
                 [ text "Images" ]
+            , case model.thumbnailImageUrl of
+                "" ->
+                    text ""
+
+                url ->
+                    let
+                        ( w, h ) =
+                            model.thumbnailImageSize
+                    in
+                    p [ style "display" "none" ]
+                        [ svg
+                            [ Svg.Attributes.id thumbnailSvgId
+                            , width <| tos w
+                            , height <| tos h
+                            ]
+                            [ Svg.Lazy.lazy3 renderThumbnailImage w h url ]
+                        ]
             , if model.showHelp then
                 helpParagraph
 
@@ -2059,6 +2123,43 @@ view model =
                     ]
                     [ text "GitHub" ]
                 ]
+            , ImageProperties.imageProperties
+                [ ImageProperties.imageId imageId
+                , ImageProperties.triggerImageProperties
+                    model.triggerImageProperties
+                , ImageProperties.onImageProperties ReceiveImageProperties
+                ]
+                []
+            , SvgToDataUrl.svgToDataUrl
+                [ SvgToDataUrl.returnedFileParameters svgId
+                    model.fileName
+                    model.mimeType
+                , SvgToDataUrl.triggerReturnedFile model.triggerReturnedFile
+                , SvgToDataUrl.onReturnedFile ReceiveReturnedFile
+                , SvgToDataUrl.returnedUrlParameters svgId model.mimeType
+                , SvgToDataUrl.triggerReturnedUrl model.triggerReturnedUrl
+                , SvgToDataUrl.onReturnedUrl
+                    (\returnedUrl ->
+                        ReceiveMemeImageUrl returnedUrl.url
+                    )
+                ]
+                []
+            , ImageProperties.imageProperties
+                [ ImageProperties.imageId thumbnailImageId
+                , ImageProperties.triggerImageProperties
+                    model.triggerThumbnailProperties
+                , ImageProperties.onImageProperties ReceiveThumbnailProperties
+                ]
+                []
+            , SvgToDataUrl.svgToDataUrl
+                [ SvgToDataUrl.returnedUrlParameters thumbnailSvgId "image/jpeg"
+                , SvgToDataUrl.triggerReturnedUrl model.triggerThumbnailUrl
+                , SvgToDataUrl.onReturnedUrl
+                    (\returnedUrl ->
+                        ReceiveThumbnailUrl returnedUrl.url
+                    )
+                ]
+                []
             , Dialog.render (dialogConfig model) (model.dialog /= NoDialog)
             ]
         ]
@@ -2768,22 +2869,27 @@ renderSvgImage wi hi url =
         []
 
 
-thumbnailImageWidth : String
+thumbnailScaledHeight : Int
+thumbnailScaledHeight =
+    50
+
+
+thumbnailImageWidth : Int
 thumbnailImageWidth =
-    "200"
+    144
 
 
-thumbnailImageHeight : String
+thumbnailImageHeight : Int
 thumbnailImageHeight =
-    "150"
+    100
 
 
-renderThumbnailImage : String -> Svg Msg
-renderThumbnailImage url =
+renderThumbnailImage : Int -> Int -> String -> Svg Msg
+renderThumbnailImage w h url =
     Svg.image
         [ Svg.Attributes.id thumbnailImageId
-        , width thumbnailImageWidth
-        , height thumbnailImageHeight
+        , width <| tos w
+        , height <| tos h
         , xlinkHref url
         ]
         []
@@ -3101,14 +3207,8 @@ large data urls.
 imagesDialog : Model -> Config Msg
 imagesDialog model =
     let
-        inputs =
-            model.inputs
-
-        images =
-            model.images
-
         imageList =
-            Dict.toList images
+            Dict.toList model.thumbnails
                 |> List.map Tuple.second
     in
     { styles = []
@@ -3131,13 +3231,22 @@ imagesDialog model =
 savedImageRow : Model -> Image -> Html Msg
 savedImageRow name image =
     tr []
-        [ td []
-            [ img
-                [ src image.url
-                , alt image.hash
-                , width "100px"
+        [ td
+            [ align "center"
+            ]
+            [ button
+                [ style "padding" "2px"
+                , style "padding-bottom" "0"
+                , style "margin" "0"
+                , onClick <| GetImageFromDialog image.hash
                 ]
-                []
+                [ img
+                    [ src image.url
+                    , alt image.hash
+                    , height <| tos thumbnailScaledHeight
+                    ]
+                    []
+                ]
             ]
         , td [ align "center" ]
             [ button
@@ -3367,9 +3476,23 @@ getThumbnail hash model =
     get key model
 
 
+putThumbnail : String -> String -> Model -> Cmd Msg
+putThumbnail hash url model =
+    let
+        key =
+            encodeSubkey persistenceKeys.thumbnails hash
+    in
+    put key (Just <| JE.string url) model
+
+
 imageForThumbnailLabel : String
 imageForThumbnailLabel =
     "imageForThumbnail"
+
+
+imageFromDialogLabel : String
+imageFromDialogLabel =
+    "imageFromDialog"
 
 
 listImageUrlsLabel : String
