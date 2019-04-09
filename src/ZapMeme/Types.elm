@@ -75,6 +75,7 @@ type alias Inputs =
     , height : String
     , fileName : String
     , savedMemeName : String
+    , showAllImages : Bool
     }
 
 

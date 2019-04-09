@@ -357,6 +357,7 @@ encodeInputs inputs =
         , ( "height", JE.string inputs.height )
         , ( "fileName", JE.string inputs.fileName )
         , ( "savedMemeName", JE.string inputs.savedMemeName )
+        , ( "showAllImages", JE.bool inputs.showAllImages )
         ]
 
 
@@ -377,3 +378,4 @@ inputsDecoder =
         |> required "height" JD.string
         |> required "fileName" JD.string
         |> optional "savedMemeName" JD.string ""
+        |> optional "showAllImages" JD.bool True

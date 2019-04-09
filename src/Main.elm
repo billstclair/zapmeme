@@ -398,7 +398,6 @@ type alias Model =
     , receivedMeme : Maybe Meme
     , receivedModel : Maybe SavedModel
     , knownImages : Set String
-    , images : Dict String Image
     , thumbnails : Dict String Image
     , thumbnailImageUrl : String
     , thumbnailImageHash : String
@@ -408,12 +407,8 @@ type alias Model =
     , neededThumbnails : List String
     , savedMemes : Set String
     , neededMemes : List String
-
-    -- meme name -> image hash
-    , memeImages : Dict String String
-
-    -- image hash -> list of meme names
-    , imageMemes : Dict String (List String)
+    , memeImages : Dict String String -- meme name -> image hash
+    , imageMemes : Dict String (List String) -- image hash -> list of meme names
     , funnelState : PortFunnels.State
     , msg : Maybe String
     }
@@ -443,6 +438,7 @@ initialInputs =
     , height = "15"
     , fileName = "meme"
     , savedMemeName = "meme"
+    , showAllImages = True
     }
 
 
@@ -555,6 +551,7 @@ type Msg
     | SetWidth String
     | SetHeight String
     | SetFileName String
+    | SetShowAllImages Bool
     | StartDownload String String
     | MaybePutImageUrl String String
     | ImageExists String
@@ -670,7 +667,6 @@ init flags url key =
             , receivedMeme = Nothing
             , receivedModel = Nothing
             , knownImages = Set.empty
-            , images = Dict.empty
             , thumbnails = Dict.empty
             , thumbnailImageUrl = ""
             , thumbnailImageHash = ""
@@ -749,6 +745,7 @@ selectCaption position model =
                         , height = tos caption.height
                         , fileName = model.inputs.fileName
                         , savedMemeName = model.inputs.savedMemeName
+                        , showAllImages = model.inputs.showAllImages
                         }
     in
     { model
@@ -1018,12 +1015,66 @@ updateInternal msg model =
                 |> withCmd (getSavedMeme name model)
 
         DeleteSavedMeme name ->
-            { model | savedMemes = Set.remove name model.savedMemes }
+            let
+                maybeHash =
+                    Dict.get name model.memeImages
+            in
+            { model
+                | savedMemes = Set.remove name model.savedMemes
+                , memeImages =
+                    Dict.remove name model.memeImages
+                , imageMemes =
+                    case maybeHash of
+                        Nothing ->
+                            model.imageMemes
+
+                        Just hash ->
+                            Dict.insert hash
+                                (Dict.get hash model.imageMemes
+                                    |> Maybe.withDefault []
+                                    |> List.filter ((/=) name)
+                                )
+                                model.imageMemes
+            }
                 |> withCmd (putSavedMeme name Nothing model)
 
         DeleteSavedImage hash ->
-            -- TODO
-            model |> withNoCmd
+            let
+                memes =
+                    Dict.get hash model.imageMemes |> Maybe.withDefault []
+            in
+            { model
+                | knownImages = Set.remove hash model.knownImages
+                , thumbnails = Dict.remove hash model.thumbnails
+                , imageMemes = Dict.remove hash model.imageMemes
+                , memeImages =
+                    List.foldr Dict.remove model.memeImages memes
+                , savedMemes =
+                    List.foldr Set.remove model.savedMemes memes
+                , meme =
+                    if hash == model.meme.image.hash then
+                        initialMeme
+
+                    else
+                        model.meme
+            }
+                |> withCmds
+                    (List.concat
+                        [ [ clear (encodeSubkey persistenceKeys.images hash)
+                                model
+                          , clear (encodeSubkey persistenceKeys.imageurls hash)
+                                model
+                          , clear (encodeSubkey persistenceKeys.thumbnails hash)
+                                model
+                          ]
+                        , List.map
+                            (\name ->
+                                clear (encodeSubkey persistenceKeys.memes name)
+                                    model
+                            )
+                            memes
+                        ]
+                    )
 
         SelectCaption position ->
             selectCaption position model
@@ -1082,8 +1133,7 @@ updateInternal msg model =
             else
                 let
                     flagKey =
-                        Debug.log "MaybePutImageUrl" <|
-                            encodeSubkey persistenceKeys.images hash
+                        encodeSubkey persistenceKeys.images hash
                 in
                 { model | receiveImagesHandler = Just <| receivePutImageImages url }
                     |> withCmd (get flagKey model)
@@ -1100,8 +1150,7 @@ updateInternal msg model =
                     encodeSubkey persistenceKeys.images hash
 
                 key =
-                    Debug.log "PutImageUrl" <|
-                        encodeSubkey persistenceKeys.imageurls hash
+                    encodeSubkey persistenceKeys.imageurls hash
             in
             -- I don't know where this comes from yet, but we don't want to save it.
             if hash == "" then
@@ -1131,7 +1180,7 @@ updateInternal msg model =
                 mdl =
                     { model | dialog = NoDialog }
             in
-            case Debug.log "ReceiveMeme" value of
+            case value of
                 Nothing ->
                     useInitialMeme mdl
 
@@ -1165,7 +1214,7 @@ updateInternal msg model =
                         Just savedModel ->
                             savedModelToModel savedModel mdl1
             in
-            case Debug.log "ReceiveImage" value of
+            case value of
                 Nothing ->
                     useInitialMeme mdl
 
@@ -1227,7 +1276,7 @@ updateInternal msg model =
             in
             { model
                 | knownImages =
-                    Set.fromList <| Debug.log "ReveiveImageUrls" urls
+                    Set.fromList urls
             }
                 |> loadThumbnails
 
@@ -1289,10 +1338,6 @@ updateInternal msg model =
                     )
 
         ReceiveImageForThumbnail hash value ->
-            let
-                hsh =
-                    Debug.log "ReceiveImageForThumbnail" hash
-            in
             case value of
                 Nothing ->
                     loadNextThumbnail model
@@ -1321,11 +1366,8 @@ updateInternal msg model =
 
         ReceiveThumbnailProperties properties ->
             let
-                props =
-                    Debug.log "ReceiveThumbnailProperties" properties
-
                 w =
-                    props.width * thumbnailScaledHeight // props.height
+                    properties.width * thumbnailScaledHeight // properties.height
             in
             { model
                 | thumbnailImageSize = ( w, thumbnailScaledHeight )
@@ -1408,7 +1450,7 @@ updateInternal msg model =
             in
             { model | downloadFile = Just downloadFile }
                 |> withCmd
-                    (if Debug.log "canDownload" returnedFile.canDownload then
+                    (if returnedFile.canDownload then
                         Task.perform ReceiveReturnedBytes <|
                             File.toBytes downloadFile
 
@@ -1437,7 +1479,7 @@ updateInternal msg model =
         ReceiveMemeImageUrl url ->
             { model
                 | downloadFile = Nothing
-                , showMemeImage = Debug.log "ReceiveMemeImageUrl" True
+                , showMemeImage = True
                 , memeImageUrl = Just url
             }
                 |> withCmd
@@ -1689,10 +1731,11 @@ updateInternal msg model =
                 |> withNoCmd
 
         SetFileName name ->
-            { model
-                | inputs =
-                    { inputs | fileName = name }
-            }
+            { model | inputs = { inputs | fileName = name } }
+                |> withNoCmd
+
+        SetShowAllImages showAllImages ->
+            { model | inputs = { inputs | showAllImages = showAllImages } }
                 |> withNoCmd
 
         HandleUrlRequest request ->
@@ -1736,12 +1779,10 @@ loadThumbnails : Model -> ( Model, Cmd Msg )
 loadThumbnails model =
     let
         neededThumbnails =
-            Debug.log "neededThumbnails"
-                (Dict.keys model.thumbnails
-                    |> Set.fromList
-                    |> Set.diff model.knownImages
-                    |> Set.toList
-                )
+            Dict.keys model.thumbnails
+                |> Set.fromList
+                |> Set.diff model.knownImages
+                |> Set.toList
     in
     case neededThumbnails of
         [] ->
@@ -2874,6 +2915,10 @@ the background image. Again, you may enter a custom color. I find
 Click "Hide Help" to hide this text, and "Show Help" to show it again.
 
 Click "Memes" to bring up a dialog where you can save the current meme, or load or delete previously saved memes. The "Save Meme" button there will save the current meme with the name in the text box to its left. Clicking an "O" button in the "Load" column will load that meme. Clicking an "X" button in the "Delete" column will delete that meme. The images will remain, so you'll only lose the meme text and sizing information.
+
+Click "Images" to bring up a dialog showing all images you have ever viewed in the current browser. They will be sorted by the name of the first meme for each image, with images that have no saved memes first, in random order. If you uncheck "Show all iamges", only images with saved memes will be shown. If you click the "X" button in the "Delete" column for an image row, that image, and all saved memes that use it, will be removed from your browser's database. There is no confirmation and no undo. Be careful out there.
+
+You can dismiss a pop-up dialog either by clicking the "Close" button at the bottom, or by pressing the "Esc" key on your keyboard.
          """
 
 
@@ -3318,27 +3363,57 @@ imagesDialog model =
         imageList =
             Dict.toList model.thumbnails
                 |> List.map Tuple.second
+
+        showAllImages =
+            model.inputs.showAllImages
+
+        rows =
+            List.map (savedImageRow model) imageList
+                |> List.sortBy Tuple.first
+                |> List.filter
+                    (if showAllImages then
+                        \_ -> True
+
+                     else
+                        \( memes, _ ) -> memes /= []
+                    )
+                |> List.map Tuple.second
     in
     { styles = []
     , title = "Images"
     , content =
-        [ table
+        [ input
+            [ type_ "checkbox"
+            , onCheck SetShowAllImages
+            , checked model.inputs.showAllImages
+            ]
+            []
+        , text " Show all images"
+        , br
+        , table
             []
             (tr []
                 [ thead "Image"
                 , thead "Delete"
                 , thead "Memes"
                 ]
-                :: List.map (savedImageRow model) imageList
+                :: rows
             )
         ]
     , actionBar = [ dismissDialogButton ]
     }
 
 
-savedImageRow : Model -> Image -> Html Msg
+savedImageRow : Model -> Image -> ( List String, Html Msg )
 savedImageRow model image =
-    tr []
+    let
+        names =
+            Dict.get image.hash model.imageMemes
+                |> Maybe.withDefault []
+                |> List.sort
+    in
+    ( names
+    , tr []
         [ td
             [ align "center"
             ]
@@ -3356,17 +3431,17 @@ savedImageRow model image =
             ]
         , td [ align "center" ]
             [ button
-                [ onClick <| DeleteSavedImage image.hash ]
+                [ onClick <| DeleteSavedImage image.hash
+                , disabled <| image.hash == initialMeme.image.hash
+                ]
                 [ text "X" ]
             ]
         , td []
-            (Dict.get image.hash model.imageMemes
-                |> Maybe.withDefault []
-                |> List.sort
-                |> List.map loadMemeLink
+            (List.map loadMemeLink names
                 |> List.intersperse br
             )
         ]
+    )
 
 
 loadMemeLink : String -> Html Msg
@@ -3494,6 +3569,11 @@ savedModelToModel savedModel model =
         , showMemeImage = savedModel.showMemeImage
         , showHelp = savedModel.showHelp
     }
+
+
+clear : String -> Model -> Cmd Msg
+clear prefix model =
+    localStorageSend (LocalStorage.clear <| Debug.log "clear" prefix) model
 
 
 get : String -> Model -> Cmd Msg
