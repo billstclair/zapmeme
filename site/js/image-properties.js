@@ -48,6 +48,7 @@ customElements.define('image-properties', class extends HTMLElement {
 
       var image = this.image
       if (!image) {
+        window.setTimeout(dispatch, 1);
         return;
       }
 

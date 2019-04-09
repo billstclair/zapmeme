@@ -407,7 +407,13 @@ type alias Model =
     , triggerThumbnailUrl : Int
     , neededThumbnails : List String
     , savedMemes : Set String
-    , imageMemes : Dict String (List Meme)
+    , neededMemes : List String
+
+    -- meme name -> image hash
+    , memeImages : Dict String String
+
+    -- image hash -> list of meme names
+    , imageMemes : Dict String (List String)
     , funnelState : PortFunnels.State
     , msg : Maybe String
     }
@@ -507,6 +513,7 @@ type Msg
     | InitialDelay Posix
     | Tick Posix
     | WindowResize Int Int
+    | OnKeyPress String
     | SelectCaption (Maybe TextPosition)
     | AddCaption
     | DeleteCaption
@@ -558,6 +565,7 @@ type Msg
     | ReceiveModel (Maybe Value)
     | ReceiveMemeKeys (List String)
     | ReceiveImageUrls (List String)
+    | ReceiveMemeImageHash String (Maybe Value)
     | ReceiveThumbnail String (Maybe Value)
     | ReceiveImageForThumbnail String (Maybe Value)
     | ReceiveThumbnailProperties ImageProperties
@@ -595,11 +603,19 @@ repeatTime =
     SB.RepeatTimeWithInitialDelay 500 shortRepeatTimeDelay
 
 
+keyPressDecoder : Decoder Msg
+keyPressDecoder =
+    JD.field "key" JD.string
+        |> JD.andThen
+            (OnKeyPress >> JD.succeed)
+
+
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ Time.every shortRepeatTimeDelay Tick
         , Events.onResize WindowResize
+        , Events.onKeyDown keyPressDecoder
         , PortFunnels.subscriptions ProcessLocalStorage model
         ]
 
@@ -663,6 +679,8 @@ init flags url key =
             , triggerThumbnailUrl = 0
             , neededThumbnails = []
             , savedMemes = Set.empty
+            , neededMemes = []
+            , memeImages = Dict.empty
             , imageMemes = Dict.empty
             , funnelState = PortFunnels.initialState localStoragePrefix
             , msg = Nothing
@@ -950,6 +968,15 @@ updateInternal msg model =
             { model | windowSize = ( w, h ) }
                 |> withNoCmd
 
+        OnKeyPress key ->
+            ( if key == "Escape" then
+                { model | dialog = NoDialog }
+
+              else
+                model
+            , Cmd.none
+            )
+
         AddCaption ->
             addCaption model
 
@@ -968,8 +995,7 @@ updateInternal msg model =
                 |> withNoCmd
 
         SetImagesDialog ->
-            { model | dialog = ImagesDialog }
-                |> withCmd (listImages model)
+            setImagesDialog model
 
         SetSavedMemeName name ->
             { model | inputs = { inputs | savedMemeName = name } }
@@ -987,6 +1013,7 @@ updateInternal msg model =
             { model
                 | savedMemes = Set.insert name model.savedMemes
                 , showMemeImage = False
+                , inputs = { inputs | savedMemeName = name }
             }
                 |> withCmd (getSavedMeme name model)
 
@@ -1076,13 +1103,18 @@ updateInternal msg model =
                     Debug.log "PutImageUrl" <|
                         encodeSubkey persistenceKeys.imageurls hash
             in
-            { model
-                | knownImages = Set.insert hash model.knownImages
-            }
-                |> withCmds
-                    [ put flagKey (Just <| JE.bool True) model
-                    , put key (Just <| JE.string url) model
-                    ]
+            -- I don't know where this comes from yet, but we don't want to save it.
+            if hash == "" then
+                model |> withNoCmd
+
+            else
+                { model
+                    | knownImages = Set.insert hash model.knownImages
+                }
+                    |> withCmds
+                        [ put flagKey (Just <| JE.bool True) model
+                        , put key (Just <| JE.string url) model
+                        ]
 
         ReceiveImageKey hash value ->
             case model.receiveImagesHandler of
@@ -1095,22 +1127,26 @@ updateInternal msg model =
                     )
 
         ReceiveMeme value ->
+            let
+                mdl =
+                    { model | dialog = NoDialog }
+            in
             case Debug.log "ReceiveMeme" value of
                 Nothing ->
-                    useInitialMeme model
+                    useInitialMeme mdl
 
                 Just v ->
                     case ED.decodeMeme v of
                         Err _ ->
-                            useInitialMeme model
+                            useInitialMeme mdl
 
                         Ok meme ->
-                            ( { model | receivedMeme = Just meme }
+                            ( { mdl | receivedMeme = Just meme }
                             , get
                                 (encodeSubkey persistenceKeys.imageurls
                                     meme.image.hash
                                 )
-                                model
+                                mdl
                             )
 
         ReceiveImage hash value ->
@@ -1173,13 +1209,12 @@ updateInternal msg model =
 
                         Ok savedModel ->
                             { model | receivedModel = Just savedModel }
-                                |> withCmd
-                                    (if savedModel.dialog == ImagesDialog then
-                                        listImages model
+                                |> (if savedModel.dialog == ImagesDialog then
+                                        setImagesDialog
 
-                                     else
-                                        Cmd.none
-                                    )
+                                    else
+                                        withNoCmd
+                                   )
 
         ReceiveMemeKeys keys ->
             receiveMemeKeys keys model
@@ -1195,6 +1230,35 @@ updateInternal msg model =
                     Set.fromList <| Debug.log "ReveiveImageUrls" urls
             }
                 |> loadThumbnails
+
+        ReceiveMemeImageHash name value ->
+            case value of
+                Nothing ->
+                    loadNextMemeImage model
+
+                Just v ->
+                    case ED.decodeMeme v of
+                        Err _ ->
+                            loadNextMemeImage model
+
+                        Ok meme ->
+                            let
+                                hash =
+                                    meme.image.hash
+
+                                names =
+                                    Dict.get hash model.imageMemes
+                                        |> Maybe.withDefault []
+                            in
+                            { model
+                                | memeImages =
+                                    Dict.insert name hash model.memeImages
+                                , imageMemes =
+                                    Dict.insert hash
+                                        (adjoin name names)
+                                        model.imageMemes
+                            }
+                                |> loadNextMemeImage
 
         ReceiveThumbnail hash value ->
             case value of
@@ -1225,6 +1289,10 @@ updateInternal msg model =
                     )
 
         ReceiveImageForThumbnail hash value ->
+            let
+                hsh =
+                    Debug.log "ReceiveImageForThumbnail" hash
+            in
             case value of
                 Nothing ->
                     loadNextThumbnail model
@@ -1232,6 +1300,10 @@ updateInternal msg model =
                 Just v ->
                     case JD.decodeValue JD.string v of
                         Err _ ->
+                            loadNextThumbnail model
+
+                        -- I don't know how this happens, but it does.
+                        Ok "" ->
                             loadNextThumbnail model
 
                         Ok url ->
@@ -1651,6 +1723,15 @@ updateInternal msg model =
                     res
 
 
+setImagesDialog : Model -> ( Model, Cmd Msg )
+setImagesDialog model =
+    let
+        ( mdl, cmd ) =
+            { model | dialog = ImagesDialog } |> listMemes
+    in
+    mdl |> withCmds [ cmd, listImages model ]
+
+
 loadThumbnails : Model -> ( Model, Cmd Msg )
 loadThumbnails model =
     let
@@ -1669,6 +1750,26 @@ loadThumbnails model =
         hash :: rest ->
             { model | neededThumbnails = rest }
                 |> withCmd (getThumbnail hash model)
+
+
+adjoin : a -> List a -> List a
+adjoin a list =
+    if List.member a list then
+        list
+
+    else
+        a :: list
+
+
+loadNextMemeImage : Model -> ( Model, Cmd Msg )
+loadNextMemeImage model =
+    case model.neededMemes of
+        [] ->
+            model |> withNoCmd
+
+        name :: tail ->
+            { model | neededMemes = tail }
+                |> withCmd (getMemeImage name model)
 
 
 loadNextThumbnail : Model -> ( Model, Cmd Msg )
@@ -1858,9 +1959,16 @@ storageHandler response state model =
 
             else if pkey == persistenceKeys.memes then
                 -- Meme, indexed as "memes.<saved name>"
-                ( { model | dialog = NoDialog }
-                , Task.perform ReceiveMeme (Task.succeed value)
-                )
+                let
+                    msg =
+                        if Just memeImageLabel == label then
+                            ReceiveMemeImageHash subkey
+
+                        else
+                            ReceiveMeme
+                in
+                model
+                    |> withCmd (Task.perform msg <| Task.succeed value)
 
             else if pkey == persistenceKeys.thumbnails then
                 -- "data:..." URL, indexed as "thumbnails.<hash>"
@@ -3229,15 +3337,13 @@ imagesDialog model =
 
 
 savedImageRow : Model -> Image -> Html Msg
-savedImageRow name image =
+savedImageRow model image =
     tr []
         [ td
             [ align "center"
             ]
-            [ button
-                [ style "padding" "2px"
-                , style "padding-bottom" "0"
-                , style "margin" "0"
+            [ a
+                [ href "#"
                 , onClick <| GetImageFromDialog image.hash
                 ]
                 [ img
@@ -3253,8 +3359,23 @@ savedImageRow name image =
                 [ onClick <| DeleteSavedImage image.hash ]
                 [ text "X" ]
             ]
-        , td [] [ text "TODO" ]
+        , td []
+            (Dict.get image.hash model.imageMemes
+                |> Maybe.withDefault []
+                |> List.sort
+                |> List.map loadMemeLink
+                |> List.intersperse br
+            )
         ]
+
+
+loadMemeLink : String -> Html Msg
+loadMemeLink name =
+    a
+        [ href "#"
+        , onClick <| LoadSavedMeme name
+        ]
+        [ text name ]
 
 
 dismissDialogButton : Html Msg
@@ -3281,18 +3402,32 @@ noDialog model =
 
 dialogConfig : Model -> Config Msg
 dialogConfig model =
-    case model.dialog of
-        HelpDialog ->
-            helpDialog model
+    let
+        config =
+            case model.dialog of
+                HelpDialog ->
+                    helpDialog model
 
-        MemesDialog ->
-            memesDialog model
+                MemesDialog ->
+                    memesDialog model
 
-        ImagesDialog ->
-            imagesDialog model
+                ImagesDialog ->
+                    imagesDialog model
 
-        _ ->
-            noDialog model
+                _ ->
+                    noDialog model
+
+        ( _, h ) =
+            model.windowSize
+    in
+    { config
+        | styles =
+            List.append
+                [ ( "max-height", (tos <| h * 85 // 100) ++ "px" )
+                , ( "overflow", "auto" )
+                ]
+                config.styles
+    }
 
 
 
@@ -3460,6 +3595,35 @@ getSavedMeme name model =
     get key model
 
 
+getMemeImage : String -> Model -> Cmd Msg
+getMemeImage name model =
+    let
+        key =
+            encodeSubkey persistenceKeys.memes name
+    in
+    getLabeled memeImageLabel key model
+
+
+listMemes : Model -> ( Model, Cmd Msg )
+listMemes model =
+    let
+        loadedMemes =
+            Dict.toList model.memeImages
+                |> List.map Tuple.first
+                |> Set.fromList
+
+        neededMemes =
+            Set.diff model.savedMemes loadedMemes
+    in
+    case Set.toList neededMemes of
+        [] ->
+            model |> withNoCmd
+
+        names ->
+            { model | neededMemes = names }
+                |> loadNextMemeImage
+
+
 listImages : Model -> Cmd Msg
 listImages model =
     listKeysLabeled listImageUrlsLabel
@@ -3498,6 +3662,11 @@ imageFromDialogLabel =
 listImageUrlsLabel : String
 listImageUrlsLabel =
     "listImageUrls"
+
+
+memeImageLabel : String
+memeImageLabel =
+    "memeimage"
 
 
 {-| Plural means there are subkeys, e.g. "memes.<name>","images.<hash>"
