@@ -2849,6 +2849,13 @@ helpParagraph =
 helpText : String
 helpText =
     """
+Welcome to ZAP Meme!
+
+ZAP Meme is a webapp that runs entirely in your browser. It **NEVER**
+sends anything back to the server, except request for the code that
+makes it work, so none of your chosen images or text will ever be
+known, unless you save a meme you make, and post it somewhere public.
+
 You will usually want to choose an image other than the default from
 the "Background" section. "Max Width" and its "Height" are the maximum
 background image size, in pixels. The image will be scaled to fit. The
