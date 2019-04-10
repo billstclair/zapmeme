@@ -410,8 +410,10 @@ type alias Model =
     , neededMemes : List String
     , memeImages : Dict String String -- meme name -> image hash
     , imageMemes : Dict String (List String) -- image hash -> list of meme names
+    , loadedImages : List String
     , storageText : String
     , loadedStorage : StorageMirror
+    , expectedStorageKeys : { memes : Int, images : Int }
     , funnelState : PortFunnels.State
     , msg : Maybe String
     }
@@ -525,6 +527,8 @@ type Msg
     | LoadSavedMeme String
     | DeleteSavedMeme String
     | DeleteSavedImage String
+    | CheckLoadedImage String Bool
+    | LoadCheckedImages
     | SetShowCaptionBorders Bool
     | SetText String
     | SelectImageFile
@@ -561,7 +565,10 @@ type Msg
     | ReceiveStorageImageKeys (List String)
     | ReceiveStorageMeme String (Maybe Value)
     | ReceiveStorageImage String (Maybe Value)
+    | CheckStorageDone
     | StoreStorageMirror
+    | WaitForStore Int Posix
+    | CloseDataDialog
     | StartDownload String String
     | MaybePutImageUrl String String
     | ImageExists String
@@ -688,8 +695,10 @@ init flags url key =
             , neededMemes = []
             , memeImages = Dict.empty
             , imageMemes = Dict.empty
+            , loadedImages = []
             , storageText = ""
             , loadedStorage = StorageMirror [] []
+            , expectedStorageKeys = { memes = -1, images = -1 }
             , funnelState = PortFunnels.initialState localStoragePrefix
             , msg = Nothing
             }
@@ -1087,6 +1096,69 @@ updateInternal msg model =
                             memes
                         ]
                     )
+
+        CheckLoadedImage hash checked ->
+            { model
+                | loadedImages =
+                    if checked then
+                        adjoin hash model.loadedImages
+
+                    else
+                        List.filter ((/=) hash) model.loadedImages
+            }
+                |> withNoCmd
+
+        LoadCheckedImages ->
+            let
+                images =
+                    model.loadedImages
+
+                imageMemes =
+                    model.imageMemes
+
+                memes =
+                    List.foldl
+                        (\hash res ->
+                            List.concat
+                                [ Dict.get hash imageMemes
+                                    |> Maybe.withDefault []
+                                , res
+                                ]
+                        )
+                        []
+                        images
+            in
+            ( { model
+                | dialog = DataDialog
+                , storageText = "Loading..."
+                , expectedStorageKeys =
+                    Debug.log "LoadCheckedImages"
+                        { memes = List.length memes
+                        , images = List.length images
+                        }
+              }
+            , [ memes
+                    |> List.map
+                        (\name ->
+                            let
+                                key =
+                                    encodeSubkey persistenceKeys.memes name
+                            in
+                            getLabeled labels.storageMeme key model
+                        )
+              , images
+                    |> List.map
+                        (\hash ->
+                            let
+                                key =
+                                    encodeSubkey persistenceKeys.imageurls hash
+                            in
+                            getLabeled labels.storageImage key model
+                        )
+              ]
+                |> List.concat
+                |> Cmd.batch
+            )
 
         SelectCaption position ->
             selectCaption position model
@@ -1756,7 +1828,11 @@ updateInternal msg model =
 
         -- TODO
         LoadStorageMirror ->
-            { model | loadedStorage = StorageMirror [] [] }
+            { model
+                | loadedStorage = StorageMirror [] []
+                , expectedStorageKeys = { memes = -1, images = -1 }
+                , storageText = "Loading..."
+            }
                 |> withCmds
                     [ listKeysLabeled labels.listStorageMemes
                         (persistenceKeys.memes ++ ".")
@@ -1768,41 +1844,172 @@ updateInternal msg model =
 
         ReceiveStorageMemeKeys keys ->
             ( model
-            , List.map decodeSubkey keys
-                |> List.map Tuple.second
+                |> modifyExpectedStorageKeys (List.length keys + 1) 0
+            , keys
                 |> List.map
-                    (\name ->
-                        getLabeled labels.storageMeme
-                            (encodeSubkey persistenceKeys.memes name)
-                            model
+                    (\key ->
+                        getLabeled labels.storageMeme key model
                     )
                 |> Cmd.batch
             )
 
         -- TODO
-        ReceiveStorageMeme name value ->
-            model |> withNoCmd
-
-        -- TODO
-        ReceiveStorageImage name value ->
-            model |> withNoCmd
-
         ReceiveStorageImageKeys keys ->
             ( model
-            , List.map decodeSubkey keys
-                |> List.map Tuple.second
+                |> modifyExpectedStorageKeys 0 (List.length keys + 1)
+            , keys
                 |> List.map
-                    (\hash ->
-                        getLabeled labels.storageImage
-                            (encodeSubkey persistenceKeys.imageurls hash)
-                            model
+                    (\key ->
+                        getLabeled labels.storageImage key model
                     )
                 |> Cmd.batch
             )
+
+        ReceiveStorageMeme name value ->
+            case value of
+                Nothing ->
+                    model
+                        |> modifyExpectedStorageKeys -1 0
+                        |> withCmd checkStorageDone
+
+                Just v ->
+                    case ED.decodeMeme v of
+                        Err _ ->
+                            model
+                                |> modifyExpectedStorageKeys -1 0
+                                |> withCmd checkStorageDone
+
+                        Ok meme ->
+                            let
+                                storage =
+                                    model.loadedStorage
+                            in
+                            { model
+                                | loadedStorage =
+                                    { storage
+                                        | memes = ( name, meme ) :: storage.memes
+                                    }
+                            }
+                                |> withCmd checkStorageDone
+
+        ReceiveStorageImage hash value ->
+            case value of
+                Nothing ->
+                    model
+                        |> modifyExpectedStorageKeys 0 -1
+                        |> withCmd checkStorageDone
+
+                Just v ->
+                    case JD.decodeValue JD.string v of
+                        Err _ ->
+                            model
+                                |> modifyExpectedStorageKeys 0 -1
+                                |> withCmd checkStorageDone
+
+                        Ok url ->
+                            let
+                                storage =
+                                    model.loadedStorage
+                            in
+                            { model
+                                | loadedStorage =
+                                    { storage
+                                        | images = ( hash, url ) :: storage.images
+                                    }
+                            }
+                                |> withCmd checkStorageDone
+
+        CheckStorageDone ->
+            let
+                expected =
+                    model.expectedStorageKeys
+
+                storage =
+                    model.loadedStorage
+
+                got =
+                    { memes = List.length storage.memes
+                    , images = List.length storage.images
+                    }
+
+                mdl =
+                    if got == expected then
+                        { model
+                            | storageText =
+                                ED.encodeStorageMirror storage
+                                    |> JE.encode 2
+                            , loadedStorage = StorageMirror [] []
+                            , expectedStorageKeys =
+                                { memes = -1, images = -1 }
+                        }
+
+                    else
+                        model
+            in
+            mdl |> withNoCmd
 
         -- TODO
         StoreStorageMirror ->
-            model |> withNoCmd
+            case JD.decodeString ED.storageMirrorDecoder model.storageText of
+                Err _ ->
+                    { model
+                        | storageText = "Malformed JSON."
+                    }
+                        |> withNoCmd
+
+                Ok storage ->
+                    { model
+                        | storageText = ""
+                        , dialog = NoDialog
+                    }
+                        |> withCmds
+                            (List.concat
+                                [ List.map
+                                    (\( hash, _ ) ->
+                                        putImageFlag hash model
+                                    )
+                                    storage.images
+                                , List.map
+                                    (\( hash, url ) ->
+                                        putImage hash url model
+                                    )
+                                    storage.images
+                                , List.map
+                                    (\( name, meme ) ->
+                                        putStorageMeme name meme model
+                                    )
+                                    storage.memes
+                                , [ Task.perform (WaitForStore 0) Time.now ]
+                                ]
+                            )
+
+        WaitForStore goal now ->
+            let
+                millis =
+                    Time.posixToMillis now
+            in
+            if goal == 0 then
+                model
+                    |> withCmd
+                        (Task.perform (WaitForStore <| millis + 500) Time.now)
+
+            else if millis >= goal then
+                model
+                    |> withCmd
+                        (listKeys (persistenceKeys.memes ++ ".") model)
+
+            else
+                -- I hate busy-waiting but changing Time.every is broken
+                model
+                    |> withCmd
+                        (Task.perform (WaitForStore goal) Time.now)
+
+        CloseDataDialog ->
+            { model
+                | storageText = ""
+                , dialog = NoDialog
+            }
+                |> withNoCmd
 
         HandleUrlRequest request ->
             ( model
@@ -1832,11 +2039,35 @@ updateInternal msg model =
                     res
 
 
+checkStorageDone : Cmd Msg
+checkStorageDone =
+    Task.perform identity <| Task.succeed CheckStorageDone
+
+
+modifyExpectedStorageKeys : Int -> Int -> Model -> Model
+modifyExpectedStorageKeys memeInc imageInc model =
+    let
+        keys =
+            model.expectedStorageKeys
+    in
+    { model
+        | expectedStorageKeys =
+            { keys
+                | memes = keys.memes + memeInc
+                , images = keys.images + imageInc
+            }
+    }
+
+
 setImagesDialog : Model -> ( Model, Cmd Msg )
 setImagesDialog model =
     let
         ( mdl, cmd ) =
-            { model | dialog = ImagesDialog } |> listMemes
+            { model
+                | dialog = ImagesDialog
+                , loadedImages = []
+            }
+                |> listMemes
     in
     mdl |> withCmds [ cmd, listImages model ]
 
@@ -3002,7 +3233,13 @@ the background image. Again, you may enter a custom color. I find
 
 Click "Hide Help" to hide this text, and "Show Help" to show it again.
 
-Click "Memes" to bring up a dialog where you can save the current meme, or load or delete previously saved memes. The "Save Meme" button there will save the current meme with the name in the text box to its left. Clicking an "O" button in the "Load" column will load that meme. Clicking an "X" button in the "Delete" column will delete that meme. The images will remain, so you'll only lose the meme text and sizing information.
+Click "Memes" to bring up a dialog where you can save the current
+meme, or load or delete previously saved memes. The "Save Meme" button
+there will save the current meme with the name in the text box to its
+left. Clicking an "O" button in the "Load" column (or the underlined
+meme name) will load that meme. Clicking an "X" button in the "Delete"
+column will delete that meme. The images will remain, so you'll only
+lose the meme text and sizing information.
 
 Click "Images" to bring up a dialog showing all images you have ever
 used with ZAP Meme in the current browser. They will be sorted by the
@@ -3013,7 +3250,17 @@ the "Delete" column for an image row, that image, and all saved memes
 that use it, will be removed from your browser's database. There is no
 confirmation and no undo. Be careful out there.
 
-You can dismiss a pop-up dialog either by clicking the "Close" button at the bottom, or by pressing the "Esc" key on your keyboard.
+Click "Data" to bring up a dialog with two buttons. "Load" loads all
+memes and images from your browser's database, and encodes them as a
+long string you can paste into another browser to "Store" them into
+its database. This can take a few seconds. You can load a subset of
+the database on the "Images" dialog, by checking the "Load" column
+boxes, and clicking the "Load Checked" button. If the data you "Store"
+includes a meme with the same name as one of your existing memes, the
+old one will be overwritten and lost.
+
+You can dismiss a pop-up dialog either by clicking the "Close" button
+at the bottom, or by pressing the "Esc" key on your keyboard.
          """
 
 
@@ -3432,7 +3679,13 @@ memesDialog model =
 savedMemeRow : String -> Html Msg
 savedMemeRow name =
     tr []
-        [ td [] [ text name ]
+        [ td []
+            [ a
+                [ href "#"
+                , onClick <| LoadSavedMeme name
+                ]
+                [ text name ]
+            ]
         , td [ align "center" ]
             [ button
                 [ onClick <| LoadSavedMeme name ]
@@ -3477,13 +3730,19 @@ imagesDialog model =
             , checked model.inputs.showAllImages
             ]
             []
-        , text " Show all images"
+        , text " Show all images "
+        , button
+            [ onClick LoadCheckedImages
+            , disabled <| model.loadedImages == []
+            ]
+            [ text "Load Checked" ]
         , br
         , table
             []
             (tr []
                 [ thead "Image"
                 , thead "Delete"
+                , thead "Load"
                 , thead "Memes"
                 ]
                 :: rows
@@ -3525,6 +3784,14 @@ savedImageRow model image =
                 ]
                 [ text "X" ]
             ]
+        , td [ align "center" ]
+            [ input
+                [ type_ "checkbox"
+                , onCheck <| CheckLoadedImage image.hash
+                , checked <| List.member image.hash model.loadedImages
+                ]
+                []
+            ]
         , td []
             (List.map loadMemeLink names
                 |> List.intersperse br
@@ -3560,10 +3827,13 @@ dataDialog model =
                 , rows 4
                 , value model.storageText
                 ]
-                []
+                [ text model.storageText ]
             ]
         ]
-    , actionBar = [ dismissDialogButton ]
+    , actionBar =
+        [ button [ onClick CloseDataDialog ]
+            [ text "Close" ]
+        ]
     }
 
 
@@ -3714,6 +3984,38 @@ put key value model =
             Debug.log "put" key
     in
     localStorageSend (LocalStorage.put key value) model
+
+
+justTrueValue : Maybe Value
+justTrueValue =
+    Just <| JE.bool True
+
+
+putImageFlag : String -> Model -> Cmd Msg
+putImageFlag hash model =
+    let
+        key =
+            encodeSubkey persistenceKeys.images hash
+    in
+    put key justTrueValue model
+
+
+putImage : String -> String -> Model -> Cmd Msg
+putImage hash url model =
+    let
+        key =
+            encodeSubkey persistenceKeys.imageurls hash
+    in
+    put key (Just <| JE.string url) model
+
+
+putStorageMeme : String -> Meme -> Model -> Cmd Msg
+putStorageMeme name meme model =
+    let
+        key =
+            encodeSubkey persistenceKeys.memes name
+    in
+    put key (Just <| ED.encodeMeme meme) model
 
 
 listKeys : String -> Model -> Cmd Msg
