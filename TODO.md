@@ -21,6 +21,7 @@ This file tracks bugs and ideas for new features.
 * Custom caption location, not just the nine current positions.
 * Stamps and ornaments, e.g. speech bubbles.
 * Custom SVG for user-defined stamps and ornaments.
+* Persistence on S3.
 
 ## Bugs
 

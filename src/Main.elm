@@ -414,7 +414,6 @@ type alias Model =
     , storageText : String
     , loadedStorage : StorageMirror
     , expectedStorageKeys : { memes : Int, images : Int }
-    , funnelState : PortFunnels.State
     , msg : Maybe String
     }
 
@@ -644,6 +643,11 @@ buttonPair =
     ( buttonSize, buttonSize )
 
 
+funnelState : PortFunnels.State
+funnelState =
+    PortFunnels.initialState localStoragePrefix
+
+
 init : Value -> Url -> Key -> ( Model, Cmd Msg )
 init flags url key =
     let
@@ -699,16 +703,15 @@ init flags url key =
             , storageText = ""
             , loadedStorage = StorageMirror [] []
             , expectedStorageKeys = { memes = -1, images = -1 }
-            , funnelState = PortFunnels.initialState localStoragePrefix
             , msg = Nothing
             }
     in
     model
         |> withCmds
             [ Task.perform getViewport Dom.getViewport
-            , get persistenceKeys.meme model
-            , get persistenceKeys.model model
-            , listKeys (persistenceKeys.memes ++ ".") model
+            , get persistenceKeys.meme
+            , get persistenceKeys.model
+            , listKeys <| persistenceKeys.memes ++ "."
             ]
 
 
@@ -1025,7 +1028,7 @@ updateInternal msg model =
                 , savedMemes =
                     Set.insert inputs.savedMemeName model.savedMemes
             }
-                |> withCmd (putSavedMeme inputs.savedMemeName (Just model.meme) model)
+                |> withCmd (putSavedMeme inputs.savedMemeName (Just model.meme))
 
         LoadSavedMeme name ->
             { model
@@ -1033,7 +1036,7 @@ updateInternal msg model =
                 , showMemeImage = False
                 , inputs = { inputs | savedMemeName = name }
             }
-                |> withCmd (getSavedMeme name model)
+                |> withCmd (getSavedMeme name)
 
         DeleteSavedMeme name ->
             let
@@ -1057,7 +1060,7 @@ updateInternal msg model =
                                 )
                                 model.imageMemes
             }
-                |> withCmd (putSavedMeme name Nothing model)
+                |> withCmd (putSavedMeme name Nothing)
 
         DeleteSavedImage hash ->
             let
@@ -1082,16 +1085,12 @@ updateInternal msg model =
                 |> withCmds
                     (List.concat
                         [ [ clear (encodeSubkey persistenceKeys.images hash)
-                                model
                           , clear (encodeSubkey persistenceKeys.imageurls hash)
-                                model
                           , clear (encodeSubkey persistenceKeys.thumbnails hash)
-                                model
                           ]
                         , List.map
                             (\name ->
                                 clear (encodeSubkey persistenceKeys.memes name)
-                                    model
                             )
                             memes
                         ]
@@ -1144,7 +1143,7 @@ updateInternal msg model =
                                 key =
                                     encodeSubkey persistenceKeys.memes name
                             in
-                            getLabeled labels.storageMeme key model
+                            getLabeled labels.storageMeme key
                         )
               , images
                     |> List.map
@@ -1153,7 +1152,7 @@ updateInternal msg model =
                                 key =
                                     encodeSubkey persistenceKeys.imageurls hash
                             in
-                            getLabeled labels.storageImage key model
+                            getLabeled labels.storageImage key
                         )
               ]
                 |> List.concat
@@ -1220,7 +1219,7 @@ updateInternal msg model =
                         encodeSubkey persistenceKeys.images hash
                 in
                 { model | receiveImagesHandler = Just <| receivePutImageImages url }
-                    |> withCmd (get flagKey model)
+                    |> withCmd (get flagKey)
 
         ImageExists hash ->
             { model
@@ -1245,8 +1244,8 @@ updateInternal msg model =
                     | knownImages = Set.insert hash model.knownImages
                 }
                     |> withCmds
-                        [ put flagKey (Just <| JE.bool True) model
-                        , put key (Just <| JE.string url) model
+                        [ put flagKey (Just <| JE.bool True)
+                        , put key (Just <| JE.string url)
                         ]
 
         ReceiveImageKey hash value ->
@@ -1279,7 +1278,6 @@ updateInternal msg model =
                                 (encodeSubkey persistenceKeys.imageurls
                                     meme.image.hash
                                 )
-                                mdl
                             )
 
         ReceiveImage hash value ->
@@ -1327,7 +1325,7 @@ updateInternal msg model =
                                                 Cmd.none
 
                                              else
-                                                get persistenceKeys.shownimageurl mdl
+                                                get persistenceKeys.shownimageurl
                                             )
 
         ReceiveModel value ->
@@ -1418,7 +1416,6 @@ updateInternal msg model =
                     ( model
                     , getLabeled labels.imageForThumbnail
                         (encodeSubkey persistenceKeys.imageurls hash)
-                        model
                     )
 
         ReceiveImageForThumbnail hash value ->
@@ -1478,14 +1475,13 @@ updateInternal msg model =
                     { model | thumbnails = Dict.insert hash image model.thumbnails }
                         |> loadNextThumbnail
             in
-            mdl |> withCmds [ cmd, putThumbnail hash url mdl ]
+            mdl |> withCmds [ cmd, putThumbnail hash url ]
 
         GetImageFromDialog hash ->
             model
                 |> withCmd
                     (getLabeled labels.imageFromDialog
                         (encodeSubkey persistenceKeys.imageurls hash)
-                        model
                     )
 
         ReceiveImageFromDialog hash value ->
@@ -1569,7 +1565,6 @@ updateInternal msg model =
                 |> withCmd
                     (put persistenceKeys.shownimageurl
                         (Just <| JE.string url)
-                        model
                     )
 
         ShowMemeImage show mimeType ->
@@ -1589,7 +1584,7 @@ updateInternal msg model =
                     , selectedPosition = model.savedSelectedPosition
                 }
                     |> withCmd
-                        (put persistenceKeys.shownimageurl Nothing model)
+                        (put persistenceKeys.shownimageurl Nothing)
 
         SetImageUrl string ->
             { model
@@ -1836,10 +1831,8 @@ updateInternal msg model =
                 |> withCmds
                     [ listKeysLabeled labels.listStorageMemes
                         (persistenceKeys.memes ++ ".")
-                        model
                     , listKeysLabeled labels.listStorageImages
                         (persistenceKeys.imageurls ++ ".")
-                        model
                     ]
 
         ReceiveStorageMemeKeys keys ->
@@ -1848,7 +1841,7 @@ updateInternal msg model =
             , keys
                 |> List.map
                     (\key ->
-                        getLabeled labels.storageMeme key model
+                        getLabeled labels.storageMeme key
                     )
                 |> Cmd.batch
             )
@@ -1860,7 +1853,7 @@ updateInternal msg model =
             , keys
                 |> List.map
                     (\key ->
-                        getLabeled labels.storageImage key model
+                        getLabeled labels.storageImage key
                     )
                 |> Cmd.batch
             )
@@ -1966,17 +1959,17 @@ updateInternal msg model =
                             (List.concat
                                 [ List.map
                                     (\( hash, _ ) ->
-                                        putImageFlag hash model
+                                        putImageFlag hash
                                     )
                                     storage.images
                                 , List.map
                                     (\( hash, url ) ->
-                                        putImage hash url model
+                                        putImage hash url
                                     )
                                     storage.images
                                 , List.map
                                     (\( name, meme ) ->
-                                        putStorageMeme name meme model
+                                        putStorageMeme name meme
                                     )
                                     storage.memes
                                 , [ Task.perform (WaitForStore 0) Time.now ]
@@ -1996,7 +1989,7 @@ updateInternal msg model =
             else if millis >= goal then
                 model
                     |> withCmd
-                        (listKeys (persistenceKeys.memes ++ ".") model)
+                        (listKeys <| persistenceKeys.memes ++ ".")
 
             else
                 -- I hate busy-waiting but changing Time.every is broken
@@ -2029,7 +2022,7 @@ updateInternal msg model =
             case
                 PortFunnels.processValue funnelDict
                     value
-                    model.funnelState
+                    funnelState
                     model
             of
                 Err error ->
@@ -2069,7 +2062,7 @@ setImagesDialog model =
             }
                 |> listMemes
     in
-    mdl |> withCmds [ cmd, listImages model ]
+    mdl |> withCmds [ cmd, listImages ]
 
 
 loadThumbnails : Model -> ( Model, Cmd Msg )
@@ -2087,7 +2080,7 @@ loadThumbnails model =
 
         hash :: rest ->
             { model | neededThumbnails = rest }
-                |> withCmd (getThumbnail hash model)
+                |> withCmd (getThumbnail hash)
 
 
 adjoin : a -> List a -> List a
@@ -2107,7 +2100,7 @@ loadNextMemeImage model =
 
         name :: tail ->
             { model | neededMemes = tail }
-                |> withCmd (getMemeImage name model)
+                |> withCmd (getMemeImage name)
 
 
 loadNextThumbnail : Model -> ( Model, Cmd Msg )
@@ -2118,7 +2111,7 @@ loadNextThumbnail model =
 
         hash :: tail ->
             { model | neededThumbnails = tail }
-                |> withCmd (getThumbnail hash model)
+                |> withCmd (getThumbnail hash)
 
 
 receiveMemeKeys : List String -> Model -> ( Model, Cmd Msg )
@@ -2242,16 +2235,16 @@ funnelDict =
     PortFunnels.makeFunnelDict [ LocalStorageHandler storageHandler ] getCmdPort
 
 
-getCmdPort : String -> Model -> (Value -> Cmd Msg)
-getCmdPort moduleName model =
+getCmdPort : String -> model -> (Value -> Cmd Msg)
+getCmdPort moduleName _ =
     PortFunnels.getCmdPort ProcessLocalStorage moduleName False
 
 
-localStorageSend : LocalStorage.Message -> Model -> Cmd Msg
+localStorageSend : LocalStorage.Message -> model -> Cmd Msg
 localStorageSend message model =
     LocalStorage.send (getCmdPort LocalStorage.moduleName model)
         message
-        model.funnelState.storage
+        funnelState.storage
 
 
 storageHandler : LocalStorage.Response -> PortFunnels.State -> Model -> ( Model, Cmd Msg )
@@ -3958,32 +3951,32 @@ savedModelToModel savedModel model =
     }
 
 
-clear : String -> Model -> Cmd Msg
-clear prefix model =
-    localStorageSend (LocalStorage.clear <| Debug.log "clear" prefix) model
+clear : String -> Cmd Msg
+clear prefix =
+    localStorageSend (LocalStorage.clear <| Debug.log "clear" prefix) ()
 
 
-get : String -> Model -> Cmd Msg
-get key model =
-    localStorageSend (LocalStorage.get <| Debug.log "get" key) model
+get : String -> Cmd Msg
+get key =
+    localStorageSend (LocalStorage.get <| Debug.log "get" key) ()
 
 
-getLabeled : String -> String -> Model -> Cmd Msg
-getLabeled label key model =
+getLabeled : String -> String -> Cmd Msg
+getLabeled label key =
     localStorageSend
         (LocalStorage.getLabeled label <|
             Debug.log ("getLabeled " ++ label) key
         )
-        model
+        ()
 
 
-put : String -> Maybe Value -> Model -> Cmd Msg
-put key value model =
+put : String -> Maybe Value -> Cmd Msg
+put key value =
     let
         k =
             Debug.log "put" key
     in
-    localStorageSend (LocalStorage.put key value) model
+    localStorageSend (LocalStorage.put key value) ()
 
 
 justTrueValue : Maybe Value
@@ -3991,45 +3984,45 @@ justTrueValue =
     Just <| JE.bool True
 
 
-putImageFlag : String -> Model -> Cmd Msg
-putImageFlag hash model =
+putImageFlag : String -> Cmd Msg
+putImageFlag hash =
     let
         key =
             encodeSubkey persistenceKeys.images hash
     in
-    put key justTrueValue model
+    put key justTrueValue
 
 
-putImage : String -> String -> Model -> Cmd Msg
-putImage hash url model =
+putImage : String -> String -> Cmd Msg
+putImage hash url =
     let
         key =
             encodeSubkey persistenceKeys.imageurls hash
     in
-    put key (Just <| JE.string url) model
+    put key (Just <| JE.string url)
 
 
-putStorageMeme : String -> Meme -> Model -> Cmd Msg
-putStorageMeme name meme model =
+putStorageMeme : String -> Meme -> Cmd Msg
+putStorageMeme name meme =
     let
         key =
             encodeSubkey persistenceKeys.memes name
     in
-    put key (Just <| ED.encodeMeme meme) model
+    put key (Just <| ED.encodeMeme meme)
 
 
-listKeys : String -> Model -> Cmd Msg
-listKeys prefix model =
-    localStorageSend (LocalStorage.listKeys <| Debug.log "listKeys" prefix) model
+listKeys : String -> Cmd Msg
+listKeys prefix =
+    localStorageSend (LocalStorage.listKeys <| Debug.log "listKeys" prefix) ()
 
 
-listKeysLabeled : String -> String -> Model -> Cmd Msg
-listKeysLabeled label prefix model =
+listKeysLabeled : String -> String -> Cmd Msg
+listKeysLabeled label prefix =
     localStorageSend
         (LocalStorage.listKeysLabeled label <|
             Debug.log ("listKeysLabeled " ++ label) prefix
         )
-        model
+        ()
 
 
 putModel : Model -> Cmd Msg
@@ -4042,13 +4035,13 @@ putModel model =
             ED.encodeSavedModel savedModel
     in
     Cmd.batch
-        [ put persistenceKeys.model (Just value) model
-        , putMeme model.meme model
+        [ put persistenceKeys.model (Just value)
+        , putMeme model.meme
         ]
 
 
-putMeme : Meme -> Model -> Cmd Msg
-putMeme meme model =
+putMeme : Meme -> Cmd Msg
+putMeme meme =
     let
         image =
             meme.image
@@ -4063,13 +4056,13 @@ putMeme meme model =
             ED.encodeMeme meme
     in
     Cmd.batch
-        [ put persistenceKeys.meme (Just value) model
+        [ put persistenceKeys.meme (Just value)
         , Task.perform (MaybePutImageUrl urlHash) <| Task.succeed url
         ]
 
 
-putSavedMeme : String -> Maybe Meme -> Model -> Cmd Msg
-putSavedMeme name meme model =
+putSavedMeme : String -> Maybe Meme -> Cmd Msg
+putSavedMeme name meme =
     let
         key =
             encodeSubkey persistenceKeys.memes name
@@ -4082,25 +4075,25 @@ putSavedMeme name meme model =
                 Just m ->
                     Just <| ED.encodeMeme m
     in
-    put key value model
+    put key value
 
 
-getSavedMeme : String -> Model -> Cmd Msg
-getSavedMeme name model =
+getSavedMeme : String -> Cmd Msg
+getSavedMeme name =
     let
         key =
             encodeSubkey persistenceKeys.memes name
     in
-    get key model
+    get key
 
 
-getMemeImage : String -> Model -> Cmd Msg
-getMemeImage name model =
+getMemeImage : String -> Cmd Msg
+getMemeImage name =
     let
         key =
             encodeSubkey persistenceKeys.memes name
     in
-    getLabeled labels.memeImage key model
+    getLabeled labels.memeImage key
 
 
 listMemes : Model -> ( Model, Cmd Msg )
@@ -4123,29 +4116,28 @@ listMemes model =
                 |> loadNextMemeImage
 
 
-listImages : Model -> Cmd Msg
-listImages model =
+listImages : Cmd Msg
+listImages =
     listKeysLabeled labels.listImageUrls
         (persistenceKeys.imageurls ++ ".")
-        model
 
 
-getThumbnail : String -> Model -> Cmd Msg
-getThumbnail hash model =
+getThumbnail : String -> Cmd Msg
+getThumbnail hash =
     let
         key =
             encodeSubkey persistenceKeys.thumbnails hash
     in
-    get key model
+    get key
 
 
-putThumbnail : String -> String -> Model -> Cmd Msg
-putThumbnail hash url model =
+putThumbnail : String -> String -> Cmd Msg
+putThumbnail hash url =
     let
         key =
             encodeSubkey persistenceKeys.thumbnails hash
     in
-    put key (Just <| JE.string url) model
+    put key (Just <| JE.string url)
 
 
 labels =
