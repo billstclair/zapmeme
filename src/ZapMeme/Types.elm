@@ -17,6 +17,7 @@ module ZapMeme.Types exposing
     , Inputs
     , Meme
     , SavedModel
+    , StorageMirror
     , TextAlignment(..)
     , TextPosition(..)
     , WhichDialog(..)
@@ -125,4 +126,10 @@ type alias SavedModel =
     , inputs : Inputs
     , showMemeImage : Bool
     , showHelp : Bool
+    }
+
+
+type alias StorageMirror =
+    { memes : List ( String, Meme )
+    , images : List ( String, String )
     }

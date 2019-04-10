@@ -124,6 +124,7 @@ import ZapMeme.Types
         , Inputs
         , Meme
         , SavedModel
+        , StorageMirror
         , TextAlignment(..)
         , TextPosition(..)
         , WhichDialog(..)
@@ -409,6 +410,8 @@ type alias Model =
     , neededMemes : List String
     , memeImages : Dict String String -- meme name -> image hash
     , imageMemes : Dict String (List String) -- image hash -> list of meme names
+    , storageText : String
+    , loadedStorage : StorageMirror
     , funnelState : PortFunnels.State
     , msg : Maybe String
     }
@@ -552,6 +555,13 @@ type Msg
     | SetHeight String
     | SetFileName String
     | SetShowAllImages Bool
+    | SetStorageText String
+    | LoadStorageMirror
+    | ReceiveStorageMemeKeys (List String)
+    | ReceiveStorageImageKeys (List String)
+    | ReceiveStorageMeme String (Maybe Value)
+    | ReceiveStorageImage String (Maybe Value)
+    | StoreStorageMirror
     | StartDownload String String
     | MaybePutImageUrl String String
     | ImageExists String
@@ -678,6 +688,8 @@ init flags url key =
             , neededMemes = []
             , memeImages = Dict.empty
             , imageMemes = Dict.empty
+            , storageText = ""
+            , loadedStorage = StorageMirror [] []
             , funnelState = PortFunnels.initialState localStoragePrefix
             , msg = Nothing
             }
@@ -1332,7 +1344,7 @@ updateInternal msg model =
                     -- Start by loading the image URL.
                     -- Will continue at ReceiveImageForThumbnail
                     ( model
-                    , getLabeled imageForThumbnailLabel
+                    , getLabeled labels.imageForThumbnail
                         (encodeSubkey persistenceKeys.imageurls hash)
                         model
                     )
@@ -1399,7 +1411,7 @@ updateInternal msg model =
         GetImageFromDialog hash ->
             model
                 |> withCmd
-                    (getLabeled imageFromDialogLabel
+                    (getLabeled labels.imageFromDialog
                         (encodeSubkey persistenceKeys.imageurls hash)
                         model
                     )
@@ -1738,6 +1750,60 @@ updateInternal msg model =
             { model | inputs = { inputs | showAllImages = showAllImages } }
                 |> withNoCmd
 
+        SetStorageText storageText ->
+            { model | storageText = storageText }
+                |> withNoCmd
+
+        -- TODO
+        LoadStorageMirror ->
+            { model | loadedStorage = StorageMirror [] [] }
+                |> withCmds
+                    [ listKeysLabeled labels.listStorageMemes
+                        (persistenceKeys.memes ++ ".")
+                        model
+                    , listKeysLabeled labels.listStorageImages
+                        (persistenceKeys.imageurls ++ ".")
+                        model
+                    ]
+
+        ReceiveStorageMemeKeys keys ->
+            ( model
+            , List.map decodeSubkey keys
+                |> List.map Tuple.second
+                |> List.map
+                    (\name ->
+                        getLabeled labels.storageMeme
+                            (encodeSubkey persistenceKeys.memes name)
+                            model
+                    )
+                |> Cmd.batch
+            )
+
+        -- TODO
+        ReceiveStorageMeme name value ->
+            model |> withNoCmd
+
+        -- TODO
+        ReceiveStorageImage name value ->
+            model |> withNoCmd
+
+        ReceiveStorageImageKeys keys ->
+            ( model
+            , List.map decodeSubkey keys
+                |> List.map Tuple.second
+                |> List.map
+                    (\hash ->
+                        getLabeled labels.storageImage
+                            (encodeSubkey persistenceKeys.imageurls hash)
+                            model
+                    )
+                |> Cmd.batch
+            )
+
+        -- TODO
+        StoreStorageMirror ->
+            model |> withNoCmd
+
         HandleUrlRequest request ->
             ( model
             , case request of
@@ -1985,25 +2051,32 @@ storageHandler response state model =
 
             else if pkey == persistenceKeys.imageurls then
                 -- "data:..." URL for image, indexes as "imageurls.<hash>"
-                ( model
-                , if Just imageForThumbnailLabel == label then
-                    Task.perform (ReceiveImageForThumbnail subkey)
-                        (Task.succeed value)
+                let
+                    msg =
+                        if Just labels.imageForThumbnail == label then
+                            ReceiveImageForThumbnail subkey
 
-                  else if Just imageFromDialogLabel == label then
-                    Task.perform (ReceiveImageFromDialog subkey)
-                        (Task.succeed value)
+                        else if Just labels.imageFromDialog == label then
+                            ReceiveImageFromDialog subkey
 
-                  else
-                    Task.perform (ReceiveImage subkey) (Task.succeed value)
-                )
+                        else if Just labels.storageImage == label then
+                            ReceiveStorageImage subkey
+
+                        else
+                            ReceiveImage subkey
+                in
+                model
+                    |> withCmd (Task.perform msg <| Task.succeed value)
 
             else if pkey == persistenceKeys.memes then
                 -- Meme, indexed as "memes.<saved name>"
                 let
                     msg =
-                        if Just memeImageLabel == label then
+                        if Just labels.memeImage == label then
                             ReceiveMemeImageHash subkey
+
+                        else if Just labels.storageMeme == label then
+                            ReceiveStorageMeme subkey
 
                         else
                             ReceiveMeme
@@ -2024,8 +2097,14 @@ storageHandler response state model =
             ( model
             , Task.succeed keys
                 |> Task.perform
-                    (if label == Just listImageUrlsLabel then
+                    (if label == Just labels.listImageUrls then
                         ReceiveImageUrls
+
+                     else if label == Just labels.listStorageMemes then
+                        ReceiveStorageMemeKeys
+
+                     else if label == Just labels.listStorageImages then
+                        ReceiveStorageImageKeys
 
                      else
                         ReceiveMemeKeys
@@ -2235,6 +2314,8 @@ view model =
                     else
                         "Show Help"
                 ]
+            , button [ onClick <| SetDialog DataDialog ]
+                [ text "Data" ]
             , button [ onClick <| SetDialog MemesDialog ]
                 [ text "Memes" ]
             , button [ onClick <| SetImagesDialog ]
@@ -2852,7 +2933,7 @@ helpText =
 Welcome to ZAP Meme!
 
 ZAP Meme is a webapp that runs entirely in your browser. It **NEVER**
-sends anything back to the server, except request for the code that
+sends anything back to the server, except requests for the code that
 makes it work, so none of your chosen images or text will ever be
 known, unless you save a meme you make, and post it somewhere public.
 
@@ -2912,8 +2993,8 @@ height. The arrow buttons change this by 1, but you can type a single
 decimal digit, if you need fine tuning (e.g. "7.5").
 
 "Font Color" provides a list of choices, but you can type any HTML
-font in the text area to its right. E.g. "#8f0" for a bright green (a
-little red mixed in).
+color specification in the text area to its right. E.g. "#8f0" for a
+bright green (a little red mixed in).
 
 If you choose an "Outline Color", the text will stand out better from
 the background image. Again, you may enter a custom color. I find
@@ -2923,7 +3004,14 @@ Click "Hide Help" to hide this text, and "Show Help" to show it again.
 
 Click "Memes" to bring up a dialog where you can save the current meme, or load or delete previously saved memes. The "Save Meme" button there will save the current meme with the name in the text box to its left. Clicking an "O" button in the "Load" column will load that meme. Clicking an "X" button in the "Delete" column will delete that meme. The images will remain, so you'll only lose the meme text and sizing information.
 
-Click "Images" to bring up a dialog showing all images you have ever viewed in the current browser. They will be sorted by the name of the first meme for each image, with images that have no saved memes first, in random order. If you uncheck "Show all iamges", only images with saved memes will be shown. If you click the "X" button in the "Delete" column for an image row, that image, and all saved memes that use it, will be removed from your browser's database. There is no confirmation and no undo. Be careful out there.
+Click "Images" to bring up a dialog showing all images you have ever
+used with ZAP Meme in the current browser. They will be sorted by the
+name of the first meme for each image, with images that have no saved
+memes first, in random order. If you uncheck "Show all images", only
+images with saved memes will be shown. If you click the "X" button in
+the "Delete" column for an image row, that image, and all saved memes
+that use it, will be removed from your browser's database. There is no
+confirmation and no undo. Be careful out there.
 
 You can dismiss a pop-up dialog either by clicking the "Close" button at the bottom, or by pressing the "Esc" key on your keyboard.
          """
@@ -3358,12 +3446,6 @@ savedMemeRow name =
         ]
 
 
-{-| This doesn't work yet.
-
-We really need saved thumbnails to avoid displaying and reducing 100
-large data urls.
-
--}
 imagesDialog : Model -> Config Msg
 imagesDialog model =
     let
@@ -3460,6 +3542,31 @@ loadMemeLink name =
         [ text name ]
 
 
+dataDialog : Model -> Config Msg
+dataDialog model =
+    { styles = []
+    , title = "Data"
+    , content =
+        [ button
+            [ onClick LoadStorageMirror ]
+            [ text "Load" ]
+        , text " "
+        , button
+            [ onClick StoreStorageMirror ]
+            [ text "Store" ]
+        , p []
+            [ textarea
+                [ onInput SetStorageText
+                , rows 4
+                , value model.storageText
+                ]
+                []
+            ]
+        ]
+    , actionBar = [ dismissDialogButton ]
+    }
+
+
 dismissDialogButton : Html Msg
 dismissDialogButton =
     button [ onClick <| SetDialog NoDialog ]
@@ -3495,6 +3602,9 @@ dialogConfig model =
 
                 ImagesDialog ->
                     imagesDialog model
+
+                DataDialog ->
+                    dataDialog model
 
                 _ ->
                     noDialog model
@@ -3688,7 +3798,7 @@ getMemeImage name model =
         key =
             encodeSubkey persistenceKeys.memes name
     in
-    getLabeled memeImageLabel key model
+    getLabeled labels.memeImage key model
 
 
 listMemes : Model -> ( Model, Cmd Msg )
@@ -3713,7 +3823,7 @@ listMemes model =
 
 listImages : Model -> Cmd Msg
 listImages model =
-    listKeysLabeled listImageUrlsLabel
+    listKeysLabeled labels.listImageUrls
         (persistenceKeys.imageurls ++ ".")
         model
 
@@ -3736,24 +3846,16 @@ putThumbnail hash url model =
     put key (Just <| JE.string url) model
 
 
-imageForThumbnailLabel : String
-imageForThumbnailLabel =
-    "imageForThumbnail"
-
-
-imageFromDialogLabel : String
-imageFromDialogLabel =
-    "imageFromDialog"
-
-
-listImageUrlsLabel : String
-listImageUrlsLabel =
-    "listImageUrls"
-
-
-memeImageLabel : String
-memeImageLabel =
-    "memeimage"
+labels =
+    { imageForThumbnail = "imageForThumbnail"
+    , imageFromDialog = "imageFromDialog"
+    , listImageUrls = "listImageUrls"
+    , memeImage = "memeImage"
+    , listStorageMemes = "listStorageMemes"
+    , listStorageImages = "listtorageImages"
+    , storageMeme = "storageMeme"
+    , storageImage = "storageImage"
+    }
 
 
 {-| Plural means there are subkeys, e.g. "memes.<name>","images.<hash>"

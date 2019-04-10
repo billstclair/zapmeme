@@ -13,10 +13,13 @@
 module ZapMeme.EncodeDecode exposing
     ( decodeMeme
     , decodeSavedModel
+    , decodeStorageMirror
     , encodeMeme
     , encodeSavedModel
+    , encodeStorageMirror
     , encodeWhichDialog
     , memeDecoder
+    , storageMirrorDecoder
     )
 
 import Json.Decode as JD exposing (Decoder)
@@ -29,6 +32,7 @@ import ZapMeme.Types
         , Inputs
         , Meme
         , SavedModel
+        , StorageMirror
         , TextAlignment(..)
         , TextPosition(..)
         , WhichDialog(..)
@@ -379,3 +383,37 @@ inputsDecoder =
         |> required "fileName" JD.string
         |> optional "savedMemeName" JD.string ""
         |> optional "showAllImages" JD.bool True
+
+
+
+{- type alias StorageMirror =
+   { images : List ( String, String )
+   , memes : List ( String, Meme )
+   }
+-}
+
+
+encodeStorageMirror : StorageMirror -> Value
+encodeStorageMirror mirror =
+    JE.object
+        [ ( "memes"
+          , List.map (\( name, meme ) -> ( name, encodeMeme meme )) mirror.memes
+                |> JE.object
+          )
+        , ( "images"
+          , List.map (\( hash, url ) -> ( hash, JE.string url )) mirror.images
+                |> JE.object
+          )
+        ]
+
+
+storageMirrorDecoder : Decoder StorageMirror
+storageMirrorDecoder =
+    JD.map2 StorageMirror
+        (JD.field "memes" <| JD.keyValuePairs memeDecoder)
+        (JD.field "images" <| JD.keyValuePairs JD.string)
+
+
+decodeStorageMirror : Value -> Result JD.Error StorageMirror
+decodeStorageMirror value =
+    JD.decodeValue storageMirrorDecoder value
