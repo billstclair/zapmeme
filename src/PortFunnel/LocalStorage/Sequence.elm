@@ -12,9 +12,11 @@
 
 module PortFunnel.LocalStorage.Sequence exposing
     ( DbRequest(..)
+    , DbResponse(..)
     , KeyPair
     , State
     , StateRecord
+    , makeState
     )
 
 import Json.Decode exposing (Value)
@@ -31,12 +33,13 @@ type State state msg
     = State (StateRecord state msg)
 
 
-type DbRequest
+type DbRequest msg
     = DbNothing
     | DbGet KeyPair
     | DbPut KeyPair (Maybe Value)
     | DbListKeys KeyPair
     | DbClear KeyPair
+    | DbCustomRequest (Cmd msg)
 
 
 type DbResponse
@@ -48,7 +51,7 @@ type DbResponse
 type alias StateRecord state msg =
     { state : state
     , label : String
-    , process : DbResponse -> state -> ( DbRequest, state )
+    , process : DbResponse -> state -> ( DbRequest msg, state )
     , sender : LocalStorage.Message -> Cmd msg
     }
 
@@ -64,19 +67,14 @@ getState (State { state }) =
     state
 
 
+setState : state -> State state msg -> State state msg
+setState state (State record) =
+    State { record | state = state }
+
+
 getLabel : State state msg -> String
 getLabel (State { label }) =
     label
-
-
-send : DbRequest -> State state msg -> Cmd msg
-send request (State record) =
-    case requestToMessage record.label request of
-        Just req ->
-            record.sender req
-
-        Nothing ->
-            Cmd.none
 
 
 process : LocalStorage.Response -> State state msg -> Maybe ( State state msg, Cmd msg )
@@ -99,12 +97,17 @@ process response ((State record) as state) =
 
               else
                 State { record | state = state2 }
-            , case requestToMessage record.label request of
-                Just req ->
-                    record.sender req
+            , case request of
+                DbCustomRequest cmd ->
+                    cmd
 
-                Nothing ->
-                    Cmd.none
+                _ ->
+                    case requestToMessage record.label request of
+                        Just req ->
+                            record.sender req
+
+                        Nothing ->
+                            Cmd.none
             )
 
 
@@ -125,7 +128,7 @@ responseToDbResponse response =
             ( "", \() -> DbNoResponse )
 
 
-requestToMessage : String -> DbRequest -> Maybe LocalStorage.Message
+requestToMessage : String -> DbRequest msg -> Maybe LocalStorage.Message
 requestToMessage label request =
     case request of
         DbNothing ->
@@ -142,6 +145,9 @@ requestToMessage label request =
 
         DbClear pair ->
             Just <| LocalStorage.clear label
+
+        DbCustomRequest _ ->
+            Nothing
 
 
 encodePair : KeyPair -> String

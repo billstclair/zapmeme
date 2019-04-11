@@ -55,7 +55,7 @@ label =
     , prepareMemeDialog = "prepareMemeDialog"
     -- Complex
     , startup = "startup"
-    , prepareImageDialog = "prepareImageDialog"
+    , prepareImagesDialog = "prepareImagesDialog"
     , loadData = "loadData"
     }
 ```

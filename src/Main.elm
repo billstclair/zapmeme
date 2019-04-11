@@ -86,6 +86,13 @@ import List.Extra as LE
 import MD5
 import Markdown
 import PortFunnel.LocalStorage as LocalStorage
+import PortFunnel.LocalStorage.Sequence as Sequence
+    exposing
+        ( DbRequest(..)
+        , DbResponse(..)
+        , KeyPair
+        , StateRecord
+        )
 import PortFunnels exposing (FunnelDict, Handler(..))
 import Set exposing (Set)
 import Svg exposing (Svg, foreignObject, g, line, rect, svg)
@@ -3921,6 +3928,20 @@ decodeSubkey fullkey =
            )
 
 
+dummySavedModel : SavedModel
+dummySavedModel =
+    { dialog = NoDialog
+    , selectedPosition = Nothing
+    , savedSelectedPosition = Nothing
+    , showCaptionBorders = False
+    , maxWidth = 800
+    , maxHeight = 600
+    , inputs = initialInputs
+    , showMemeImage = False
+    , showHelp = False
+    }
+
+
 modelToSavedModel : Model -> SavedModel
 modelToSavedModel model =
     { dialog = model.dialog
@@ -4140,6 +4161,213 @@ putThumbnail hash url =
     put key (Just <| JE.string url)
 
 
+
+{-
+
+   State machines for LocalStorage.
+
+   See state-machines.md.
+
+-}
+
+
+newLabels =
+    { -- Simple
+      saveImage = "saveImage"
+    , getImage = "getImage"
+    , prepareMemes = "prepareMemes"
+
+    -- Complex
+    , startup = "startup"
+    , prepareImages = "prepareImages"
+    , loadData = "loadData"
+    }
+
+
+type StorageState
+    = SaveImageState
+        { url : String
+        , hash : String
+        }
+    | GetImageState
+    | PrepareMemesState
+    | StartupState
+        { mode : StartupMode
+        , model : SavedModel
+        , meme : Meme
+        , image : Image
+        , shownUrl : String
+        }
+    | PrepareImagesDialogState
+        { mode : PrepareImagesDialogMode
+        , hashes : List String
+        , thumbnails : Dict String Image -- hash -> image
+        , names : List String
+        , memeImage : Dict String String -- name -> hash
+        , imageMemes : Dict String (List String) -- hash -> names
+        }
+    | LoadDataState
+        { mode : LoadDataMode
+        , hashes : List String
+        , names : List String
+        , images : List Image
+        , memes : List Meme
+        }
+
+
+type StartupMode
+    = StartupIdle
+    | StartupFetchModel
+    | StartupFetchMeme
+    | StartupFetchImage
+    | StartupFetchShownImage
+
+
+type PrepareImagesDialogMode
+    = PrepareImagesIdle
+    | PrepareImagesListImages
+    | PrepareImagesLoadThumbnail
+    | PrepareImagesLoadImage
+    | PrepareImagesComputeSize
+    | PrepareImagesGetThumbnail
+    | PrepareImagesListMemes
+    | PrepareImagesLoadMeme
+
+
+type LoadDataMode
+    = LoadDataIdle
+    | LoadDataListImages
+    | LoadDataListMemes
+    | LoadDataLoadImage
+    | LoadDataLoadMeme
+
+
+type alias LocalStorageStates =
+    { saveImage : Sequence.State StorageState Msg
+    , getImage : Sequence.State StorageState Msg
+    , prepareMeme : Sequence.State StorageState Msg
+    , startup : Sequence.State StorageState Msg
+    , prepareImages : Sequence.State StorageState Msg
+    , loadData : Sequence.State StorageState Msg
+    }
+
+
+sequenceSender : LocalStorage.Message -> Cmd Msg
+sequenceSender message =
+    localStorageSend message ()
+
+
+initialStorageStates : LocalStorageStates
+initialStorageStates =
+    { saveImage =
+        Sequence.makeState
+            { state = SaveImageState { url = "", hash = "" }
+            , label = newLabels.saveImage
+            , process = saveImageStateProcess
+            , sender = sequenceSender
+            }
+    , getImage =
+        Sequence.makeState
+            { state = GetImageState
+            , label = newLabels.getImage
+            , process = getImageStateProcess
+            , sender = sequenceSender
+            }
+    , prepareMeme =
+        Sequence.makeState
+            { state = PrepareMemesState
+            , label = newLabels.prepareMemes
+            , process = prepareMemesStateProcess
+            , sender = sequenceSender
+            }
+    , startup =
+        Sequence.makeState
+            { state =
+                StartupState
+                    { mode = StartupIdle
+                    , model = dummySavedModel
+                    , meme = initialMeme
+                    , image = initialImage
+                    , shownUrl = ""
+                    }
+            , label = newLabels.startup
+            , process = startupStateProcess
+            , sender = sequenceSender
+            }
+    , prepareImages =
+        Sequence.makeState
+            { state =
+                PrepareImagesDialogState
+                    { mode = PrepareImagesIdle
+                    , hashes = []
+                    , thumbnails = Dict.empty
+                    , names = []
+                    , memeImage = Dict.empty
+                    , imageMemes = Dict.empty
+                    }
+            , label = newLabels.prepareImages
+            , process = prepareImagesStateProcess
+            , sender = sequenceSender
+            }
+    , loadData =
+        Sequence.makeState
+            { state =
+                LoadDataState
+                    { mode = LoadDataIdle
+                    , hashes = []
+                    , names = []
+                    , images = []
+                    , memes = []
+                    }
+            , label = newLabels.loadData
+            , process = loadDataStateProcess
+            , sender = sequenceSender
+            }
+    }
+
+
+type alias DbRequest =
+    Sequence.DbRequest Msg
+
+
+saveImageStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
+saveImageStateProcess response state =
+    -- TODO
+    ( DbNothing, state )
+
+
+getImageStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
+getImageStateProcess response state =
+    -- TODO
+    ( DbNothing, state )
+
+
+prepareMemesStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
+prepareMemesStateProcess response state =
+    -- TODO
+    ( DbNothing, state )
+
+
+startupStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
+startupStateProcess response state =
+    -- TODO
+    ( DbNothing, state )
+
+
+prepareImagesStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
+prepareImagesStateProcess response state =
+    -- TODO
+    ( DbNothing, state )
+
+
+loadDataStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
+loadDataStateProcess response state =
+    -- TODO
+    ( DbNothing, state )
+
+
+{-| Old labels. Will be replaced by `newLabels`
+-}
 labels =
     { imageForThumbnail = "imageForThumbnail"
     , imageFromDialog = "imageFromDialog"
@@ -4157,9 +4385,9 @@ labels =
 persistenceKeys =
     { model = "model"
     , meme = "meme"
+    , shownimageurl = "shownimageurl"
     , memes = "memes"
     , images = "images"
     , imageurls = "imageurls"
     , thumbnails = "thumbnails"
-    , shownimageurl = "shownimageurl"
     }
