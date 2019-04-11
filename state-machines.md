@@ -51,11 +51,11 @@ The state machines are all driven off of `labels` passed to `PortFunnel.LocalSto
 label =
     { -- Simple
       saveImage = "saveImage"
-    , getImageFromDialog = "getImageFromDialog"
-    , prepareMemeDialog = "prepareMemeDialog"
+    , getImage = "getImage"
+    , prepareMemes = "prepareMemes"
     -- Complex
     , startup = "startup"
-    , prepareImagesDialog = "prepareImagesDialog"
+    , prepareImages = "prepareImages"
     , loadData = "loadData"
     }
 ```
@@ -64,14 +64,14 @@ label =
 
 `saveImage` loads the `images.<hash>` flag, and, if it doesn't exist, stores the `image.<hash>` URL.
 
-`getImageFromDialog` loads the image associated with a thumbnail displayed in the "Images" dialog.
+`getImage` loads the image associated with a thumbnail displayed in the "Images" dialog.
 
-`prepareMemeDialog` does a `listKeys` for the names of the saved memes.
+`prepareMemes` does a `listKeys` for the names of the saved memes.
 
 ## Complex state machines
 
 `startup` is used to load the `SavedModel` at startup, and its associated `Meme` & `Image`, and, sometimes, saved image URL.
 
-`prepareImageDialog` lists all the image hashes, probes each one for a saved thumbnail image, creates the thumbnail if it doesn't exist, lists all the memes, then loads each meme and saves the associated image hash, indexing image hash to a list of meme names and meme name to an image hash.
+`prepareImages` lists all the image hashes, probes each one for a saved thumbnail image, creates the thumbnail if it doesn't exist, lists all the memes, then loads each meme and saves the associated image hash, indexing image hash to a list of meme names and meme name to an image hash.
 
 `loadData` lists the the saved meme names, loads each one, lists the saved image names, and loads each one. Or the lists of meme names and image hashes can be supplied, if it comes from the "Images" dialog.

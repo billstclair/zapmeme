@@ -91,7 +91,6 @@ import PortFunnel.LocalStorage.Sequence as Sequence
         ( DbRequest(..)
         , DbResponse(..)
         , KeyPair
-        , StateRecord
         )
 import PortFunnels exposing (FunnelDict, Handler(..))
 import Set exposing (Set)
@@ -387,6 +386,7 @@ type alias Model =
     , showHelp : Bool
 
     -- Below here is not persistent.
+    , localStorageStates : LocalStorageStates
     , windowSize : ( Int, Int )
     , deletedCaption : Maybe Caption
     , controller : Controller
@@ -687,6 +687,7 @@ init flags url key =
                     ()
             , showMemeImage = False
             , showHelp = False
+            , localStorageStates = initialStorageStates
             , windowSize = ( 2000, 2000 )
             , subscription = Nothing
             , fontDict = safeFontDict
@@ -4245,7 +4246,7 @@ type LoadDataMode
 type alias LocalStorageStates =
     { saveImage : Sequence.State StorageState Msg
     , getImage : Sequence.State StorageState Msg
-    , prepareMeme : Sequence.State StorageState Msg
+    , prepareMemes : Sequence.State StorageState Msg
     , startup : Sequence.State StorageState Msg
     , prepareImages : Sequence.State StorageState Msg
     , loadData : Sequence.State StorageState Msg
@@ -4260,70 +4261,111 @@ sequenceSender message =
 initialStorageStates : LocalStorageStates
 initialStorageStates =
     { saveImage =
-        Sequence.makeState
-            { state = SaveImageState { url = "", hash = "" }
-            , label = newLabels.saveImage
-            , process = saveImageStateProcess
-            , sender = sequenceSender
-            }
+        { state = SaveImageState { url = "", hash = "" }
+        , label = newLabels.saveImage
+        , process = saveImageStateProcess
+        , sender = sequenceSender
+        }
     , getImage =
-        Sequence.makeState
-            { state = GetImageState
-            , label = newLabels.getImage
-            , process = getImageStateProcess
-            , sender = sequenceSender
-            }
-    , prepareMeme =
-        Sequence.makeState
-            { state = PrepareMemesState
-            , label = newLabels.prepareMemes
-            , process = prepareMemesStateProcess
-            , sender = sequenceSender
-            }
+        { state = GetImageState
+        , label = newLabels.getImage
+        , process = getImageStateProcess
+        , sender = sequenceSender
+        }
+    , prepareMemes =
+        { state = PrepareMemesState
+        , label = newLabels.prepareMemes
+        , process = prepareMemesStateProcess
+        , sender = sequenceSender
+        }
     , startup =
-        Sequence.makeState
-            { state =
-                StartupState
-                    { mode = StartupIdle
-                    , model = dummySavedModel
-                    , meme = initialMeme
-                    , image = initialImage
-                    , shownUrl = ""
-                    }
-            , label = newLabels.startup
-            , process = startupStateProcess
-            , sender = sequenceSender
-            }
+        { state =
+            StartupState
+                { mode = StartupIdle
+                , model = dummySavedModel
+                , meme = initialMeme
+                , image = initialImage
+                , shownUrl = ""
+                }
+        , label = newLabels.startup
+        , process = startupStateProcess
+        , sender = sequenceSender
+        }
     , prepareImages =
-        Sequence.makeState
-            { state =
-                PrepareImagesDialogState
-                    { mode = PrepareImagesIdle
-                    , hashes = []
-                    , thumbnails = Dict.empty
-                    , names = []
-                    , memeImage = Dict.empty
-                    , imageMemes = Dict.empty
-                    }
-            , label = newLabels.prepareImages
-            , process = prepareImagesStateProcess
-            , sender = sequenceSender
-            }
+        { state =
+            PrepareImagesDialogState
+                { mode = PrepareImagesIdle
+                , hashes = []
+                , thumbnails = Dict.empty
+                , names = []
+                , memeImage = Dict.empty
+                , imageMemes = Dict.empty
+                }
+        , label = newLabels.prepareImages
+        , process = prepareImagesStateProcess
+        , sender = sequenceSender
+        }
     , loadData =
-        Sequence.makeState
-            { state =
-                LoadDataState
-                    { mode = LoadDataIdle
-                    , hashes = []
-                    , names = []
-                    , images = []
-                    , memes = []
-                    }
-            , label = newLabels.loadData
-            , process = loadDataStateProcess
-            , sender = sequenceSender
-            }
+        { state =
+            LoadDataState
+                { mode = LoadDataIdle
+                , hashes = []
+                , names = []
+                , images = []
+                , memes = []
+                }
+        , label = newLabels.loadData
+        , process = loadDataStateProcess
+        , sender = sequenceSender
+        }
     }
+
+
+{-| This is the reason I wrote `PortFunnel.LocalStorage.Sequence`.
+
+To add a new process, you just have to add it to to `newLabels`,
+`StorageState`, `LocalStorageStates`, & `initialStorageStates`, write
+a processing function, and add an element to the
+`Sequence.multiProcess` call below.
+
+Mostly data driven, as an old lisper likes it.
+
+-}
+newStorageHandler : LocalStorage.Response -> PortFunnels.State -> Model -> ( Model, Cmd Msg )
+newStorageHandler response state model =
+    let
+        states =
+            model.localStorageStates
+    in
+    case
+        Sequence.multiProcess
+            response
+            [ ( states.saveImage
+              , \res -> { states | saveImage = res }
+              )
+            , ( states.getImage
+              , \res -> { states | getImage = res }
+              )
+            , ( states.prepareMemes
+              , \res -> { states | prepareMemes = res }
+              )
+            , ( states.startup
+              , \res -> { states | startup = res }
+              )
+            , ( states.prepareImages
+              , \res -> { states | prepareImages = res }
+              )
+            , ( states.loadData
+              , \res -> { states | loadData = res }
+              )
+            ]
+    of
+        Just ( res, setter, cmd ) ->
+            { model | localStorageStates = setter res }
+                |> withCmd cmd
+
+        _ ->
+            model |> withNoCmd
 
 
 type alias DbRequest =

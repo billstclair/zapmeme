@@ -15,8 +15,8 @@ module PortFunnel.LocalStorage.Sequence exposing
     , DbResponse(..)
     , KeyPair
     , State
-    , StateRecord
-    , makeState
+    , multiProcess
+    , process
     )
 
 import Json.Decode exposing (Value)
@@ -27,10 +27,6 @@ type alias KeyPair =
     { prefix : String
     , subkey : String
     }
-
-
-type State state msg
-    = State (StateRecord state msg)
 
 
 type DbRequest msg
@@ -48,7 +44,7 @@ type DbResponse
     | DbKeys (List KeyPair)
 
 
-type alias StateRecord state msg =
+type alias State state msg =
     { state : state
     , label : String
     , process : DbResponse -> state -> ( DbRequest msg, state )
@@ -56,55 +52,49 @@ type alias StateRecord state msg =
     }
 
 
-makeState : StateRecord state msg -> State state msg
-makeState record =
-    -- I don't know if there will ever be anything else here.
-    State record
+multiProcess : LocalStorage.Response -> List ( State state msg, setter ) -> Maybe ( State state msg, setter, Cmd msg )
+multiProcess response states =
+    let
+        pairs =
+            List.map (\( state, setter ) -> ( process response state, setter )) states
+                |> List.filter (\( pair, _ ) -> pair /= Nothing)
+    in
+    case pairs of
+        [ ( Just ( state, cmd ), setter ) ] ->
+            Just ( state, setter, cmd )
 
-
-getState : State state msg -> state
-getState (State { state }) =
-    state
-
-
-setState : state -> State state msg -> State state msg
-setState state (State record) =
-    State { record | state = state }
-
-
-getLabel : State state msg -> String
-getLabel (State { label }) =
-    label
+        _ ->
+            Nothing
 
 
 process : LocalStorage.Response -> State state msg -> Maybe ( State state msg, Cmd msg )
-process response ((State record) as state) =
+process response state =
     let
         ( label, responseThunk ) =
             responseToDbResponse response
     in
-    if label /= record.label then
+    if label /= state.label then
         Nothing
 
     else
         let
             ( request, state2 ) =
-                record.process (responseThunk ()) record.state
+                state.process (responseThunk ()) state.state
         in
         Just
-            ( if record.state == state2 then
+            ( if state2 == state.state then
                 state
 
               else
-                State { record | state = state2 }
+                { state | state = state2 }
             , case request of
                 DbCustomRequest cmd ->
                     cmd
 
                 _ ->
-                    case requestToMessage record.label request of
+                    case requestToMessage state.label request of
                         Just req ->
-                            record.sender req
+                            state.sender req
 
                         Nothing ->
                             Cmd.none
