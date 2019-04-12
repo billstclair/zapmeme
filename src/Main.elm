@@ -1486,7 +1486,7 @@ updateInternal msg model =
             mdl |> withCmds [ cmd, putThumbnail hash url ]
 
         GetImageFromDialog hash ->
-            model
+            { model | showMemeImage = False }
                 |> withCmd
                     (getLabeled labels.imageFromDialog
                         (encodeSubkey persistenceKeys.imageurls hash)
@@ -4372,10 +4372,55 @@ type alias DbRequest =
     Sequence.DbRequest Msg
 
 
+startSaveImage : String -> String -> Model -> ( Model, Cmd Msg )
+startSaveImage hash url model =
+    let
+        pair =
+            { prefix = persistenceKeys.images
+            , subkey = hash
+            }
+
+        states =
+            model.localStorageStates
+
+        saveImageState =
+            states.saveImage
+    in
+    ( { model
+        | localStorageStates =
+            { states
+                | saveImage =
+                    { saveImageState
+                        | state = SaveImageState { url = url, hash = hash }
+                    }
+            }
+      }
+    , Sequence.send (DbGet pair) model.localStorageStates.saveImage
+    )
+
+
 saveImageStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
 saveImageStateProcess response state =
-    -- TODO
-    ( DbNothing, state )
+    let
+        nullReturn =
+            ( DbNothing, state )
+    in
+    case state of
+        SaveImageState { url, hash } ->
+            case Sequence.decodeExpectedDbGot JD.bool hash response of
+                Just ( _, Just True ) ->
+                    nullReturn
+
+                Just ( pair, _ ) ->
+                    ( DbPut pair <| JE.string url
+                    , state
+                    )
+
+                _ ->
+                    nullReturn
+
+        _ ->
+            nullReturn
 
 
 getImageStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )

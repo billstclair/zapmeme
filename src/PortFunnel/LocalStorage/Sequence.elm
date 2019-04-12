@@ -15,11 +15,13 @@ module PortFunnel.LocalStorage.Sequence exposing
     , DbResponse(..)
     , KeyPair
     , State
+    , decodeExpectedDbGot
     , multiProcess
     , process
+    , send
     )
 
-import Json.Decode exposing (Value)
+import Json.Decode as JD exposing (Decoder, Value)
 import PortFunnel.LocalStorage as LocalStorage
 
 
@@ -32,7 +34,8 @@ type alias KeyPair =
 type DbRequest msg
     = DbNothing
     | DbGet KeyPair
-    | DbPut KeyPair (Maybe Value)
+    | DbPut KeyPair Value
+    | DbRemove KeyPair
     | DbListKeys KeyPair
     | DbClear KeyPair
     | DbCustomRequest (Cmd msg)
@@ -92,13 +95,45 @@ process response state =
                     cmd
 
                 _ ->
-                    case requestToMessage state.label request of
-                        Just req ->
-                            state.sender req
-
-                        Nothing ->
-                            Cmd.none
+                    send request state
             )
+
+
+send : DbRequest msg -> State state msg -> Cmd msg
+send request state =
+    case requestToMessage state.label request of
+        Just req ->
+            state.sender req
+
+        Nothing ->
+            Cmd.none
+
+
+decodeExpectedDbGot : Decoder value -> String -> DbResponse -> Maybe ( KeyPair, Maybe value )
+decodeExpectedDbGot decoder expectedSubkey response =
+    case response of
+        DbGot pair value ->
+            if
+                (expectedSubkey /= "")
+                    && (pair.subkey /= expectedSubkey)
+            then
+                Just ( pair, Nothing )
+
+            else
+                case value of
+                    Nothing ->
+                        Just ( pair, Nothing )
+
+                    Just v ->
+                        case JD.decodeValue decoder v of
+                            Err _ ->
+                                Just ( pair, Nothing )
+
+                            Ok result ->
+                                Just ( pair, Just result )
+
+        _ ->
+            Nothing
 
 
 responseToDbResponse : LocalStorage.Response -> ( String, () -> DbResponse )
@@ -128,7 +163,10 @@ requestToMessage label request =
             Just <| LocalStorage.getLabeled label (encodePair pair)
 
         DbPut pair value ->
-            Just <| LocalStorage.put (encodePair pair) value
+            Just <| LocalStorage.put (encodePair pair) (Just value)
+
+        DbRemove pair ->
+            Just <| LocalStorage.put (encodePair pair) Nothing
 
         DbListKeys pair ->
             Just <| LocalStorage.listKeysLabeled label (encodePair pair)
