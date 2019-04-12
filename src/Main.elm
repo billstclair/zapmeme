@@ -595,6 +595,7 @@ type Msg
     | ReceiveImageFromDialog String (Maybe Value)
     | HandleUrlRequest UrlRequest
     | HandleUrlChange Url
+    | GetImageDone String String
     | ProcessLocalStorage Value
 
 
@@ -2026,6 +2027,9 @@ updateInternal msg model =
         HandleUrlChange url ->
             model |> withNoCmd
 
+        GetImageDone hash url ->
+            getImageDone hash url model
+
         ProcessLocalStorage value ->
             case
                 PortFunnels.processValue funnelDict
@@ -2745,7 +2749,7 @@ renderInputs scale scalememe model =
         , p [ style "margin-top" "0" ]
             [ nbspd
                 [ controllerRadio isDisabled CaptionWidthController model
-                , text "Width: "
+                , b "Width: "
                 , span []
                     [ input
                         [ type_ "text"
@@ -2804,7 +2808,7 @@ renderInputs scale scalememe model =
             , text " "
             , nbspd
                 [ controllerRadio isDisabled FontHeightController model
-                , b "Height:"
+                , b "Size:"
                 , span []
                     [ input
                         [ type_ "text"
@@ -4190,7 +4194,7 @@ type StorageState
         { url : String
         , hash : String
         }
-    | GetImageState
+    | GetImageState String
     | PrepareMemesState
     | StartupState
         { mode : StartupMode
@@ -4267,7 +4271,7 @@ initialStorageStates =
         , sender = sequenceSender
         }
     , getImage =
-        { state = GetImageState
+        { state = GetImageState ""
         , label = newLabels.getImage
         , process = getImageStateProcess
         , sender = sequenceSender
@@ -4385,17 +4389,20 @@ startSaveImage hash url model =
 
         saveImageState =
             states.saveImage
+
+        state2 =
+            { saveImageState
+                | state = SaveImageState { url = url, hash = hash }
+            }
     in
     ( { model
         | localStorageStates =
             { states
                 | saveImage =
-                    { saveImageState
-                        | state = SaveImageState { url = url, hash = hash }
-                    }
+                    state2
             }
       }
-    , Sequence.send (DbGet pair) model.localStorageStates.saveImage
+    , Sequence.send (DbGet pair) state2
     )
 
 
@@ -4423,10 +4430,65 @@ saveImageStateProcess response state =
             nullReturn
 
 
+startGetImage : String -> Model -> ( Model, Cmd Msg )
+startGetImage hash model =
+    let
+        pair =
+            { prefix = persistenceKeys.imageurls
+            , subkey = hash
+            }
+
+        localStorageStates =
+            model.localStorageStates
+
+        getImageState =
+            localStorageStates.getImage
+
+        state2 =
+            { getImageState | state = GetImageState hash }
+    in
+    ( { model
+        | localStorageStates =
+            { localStorageStates | getImage = state2 }
+      }
+    , Sequence.send (DbGet pair) state2
+    )
+
+
 getImageStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
 getImageStateProcess response state =
-    -- TODO
-    ( DbNothing, state )
+    let
+        nullReturn =
+            ( DbNothing, state )
+    in
+    case state of
+        GetImageState hash ->
+            case Sequence.decodeExpectedDbGot JD.string hash response of
+                Just ( pair, Just url ) ->
+                    ( DbCustomRequest <|
+                        Task.perform (GetImageDone hash) (Task.succeed url)
+                    , state
+                    )
+
+                _ ->
+                    nullReturn
+
+        _ ->
+            nullReturn
+
+
+getImageDone : String -> String -> Model -> ( Model, Cmd Msg )
+getImageDone hash url model =
+    let
+        meme =
+            model.meme
+    in
+    { model
+        | showMemeImage = False
+        , meme = { meme | image = { url = url, hash = hash } }
+        , triggerImageProperties = model.triggerImageProperties + 1
+    }
+        |> withNoCmd
 
 
 prepareMemesStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
