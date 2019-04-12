@@ -22,6 +22,7 @@ This file tracks bugs and ideas for new features.
 * Stamps and ornaments, e.g. speech bubbles.
 * Custom SVG for user-defined stamps and ornaments.
 * Persistence on S3.
+* [Keybase integration](https://keybase.io/docs/proof_integration_guide)
 
 ## Bugs
 

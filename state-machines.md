@@ -12,10 +12,10 @@ localStoragePrefix = "zapmeme"
  
 ## Keys
 
-The `persistenceKeys` are used as `LocalStorage` keys. Singular key names refer to a single key/value pair. Plural key names get a subkey added to store multiple objects of that type.
+The `pK` (short for `persistenceKeys`) are used as `LocalStorage` keys. Singular key names refer to a single key/value pair. Plural key names get a subkey added to store multiple objects of that type.
 
 ```
-persistenceKeys =
+pK =
     { model = "model"
     , meme = "meme"
     , shownimageurl = "shownimageurl"

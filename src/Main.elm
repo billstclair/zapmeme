@@ -4194,7 +4194,7 @@ type StorageState
     | StartupState
         { model : Maybe SavedModel
         , meme : Maybe Meme
-        , imageUrl : Maybe String
+        , image : Maybe Image
         , shownUrl : Maybe String
         }
     | PrepareImagesDialogState
@@ -4262,40 +4262,19 @@ initialStorageStates =
         , sender = sequenceSender
         }
     , startup =
-        { state =
-            StartupState
-                { model = Nothing
-                , meme = Nothing
-                , imageUrl = Nothing
-                , shownUrl = Nothing
-                }
+        { state = initialStartupState
         , label = newLabels.startup
         , process = startupStateProcess
         , sender = sequenceSender
         }
     , prepareImages =
-        { state =
-            PrepareImagesDialogState
-                { mode = PrepareImagesIdle
-                , hashes = []
-                , thumbnails = Dict.empty
-                , names = []
-                , memeImage = Dict.empty
-                , imageMemes = Dict.empty
-                }
+        { state = initialPrepareImagesDialogState
         , label = newLabels.prepareImages
         , process = prepareImagesStateProcess
         , sender = sequenceSender
         }
     , loadData =
-        { state =
-            LoadDataState
-                { mode = LoadDataIdle
-                , hashes = []
-                , names = []
-                , images = []
-                , memes = []
-                }
+        { state = initialLoadDataState
         , label = newLabels.loadData
         , process = loadDataStateProcess
         , sender = sequenceSender
@@ -4307,7 +4286,7 @@ initialStorageStates =
 
 To add a new process, you just have to add it to to `newLabels`,
 `StorageState`, `LocalStorageStates`, & `initialStorageStates`, write
-a processing function, and add an element to the
+start, processing, and done functions, and add an element to the
 `Sequence.multiProcess` call below.
 
 Mostly data driven, as an old lisper likes it.
@@ -4467,6 +4446,16 @@ getImageDone hash url model =
         |> withNoCmd
 
 
+initialStartupState : StorageState
+initialStartupState =
+    StartupState
+        { model = Nothing
+        , meme = Nothing
+        , image = Nothing
+        , shownUrl = Nothing
+        }
+
+
 startStartup : Model -> ( Model, Cmd Msg )
 startStartup model =
     let
@@ -4487,15 +4476,7 @@ startStartup model =
             localStorageStates.startup
 
         state2 =
-            { startupState
-                | state =
-                    StartupState
-                        { model = Nothing
-                        , meme = Nothing
-                        , imageUrl = Nothing
-                        , shownUrl = Nothing
-                        }
-            }
+            { startupState | state = initialStartupState }
     in
     { model
         | localStorageStates =
@@ -4524,12 +4505,6 @@ dbResponsePrefix response =
             ""
 
 
-type Done
-    = NotDone
-    | IsDone
-    | IsDoneAbort
-
-
 startupStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
 startupStateProcess response state =
     let
@@ -4546,20 +4521,20 @@ startupStateProcess response state =
                     KeyPair "" ""
 
                 abortTriplet =
-                    ( IsDoneAbort, startupState, noPair )
+                    ( True, startupState, noPair )
 
                 ( done, startupState2, nextPair ) =
                     if prefix == pK.shownimageurl then
                         case Sequence.decodeExpectedDbGot JD.string "" response of
                             Just ( _, Just url ) ->
-                                ( NotDone
+                                ( False
                                 , { startupState | shownUrl = Just url }
                                 , KeyPair pK.model ""
                                 )
 
                             _ ->
                                 -- If this fails, don't abort.
-                                ( NotDone
+                                ( False
                                 , startupState
                                 , KeyPair pK.model ""
                                 )
@@ -4567,7 +4542,7 @@ startupStateProcess response state =
                     else if prefix == pK.model then
                         case Sequence.decodeExpectedDbGot ED.savedModelDecoder "" response of
                             Just ( _, Just model ) ->
-                                ( NotDone
+                                ( False
                                 , { startupState | model = Just model }
                                 , KeyPair pK.meme ""
                                 )
@@ -4578,7 +4553,7 @@ startupStateProcess response state =
                     else if prefix == pK.meme then
                         case Sequence.decodeExpectedDbGot ED.memeDecoder "" response of
                             Just ( _, Just meme ) ->
-                                ( NotDone
+                                ( False
                                 , { startupState | meme = Just meme }
                                 , KeyPair pK.imageurls meme.image.hash
                                 )
@@ -4588,9 +4563,11 @@ startupStateProcess response state =
 
                     else if prefix == pK.imageurls then
                         case Sequence.decodeExpectedDbGot JD.string "" response of
-                            Just ( _, Just url ) ->
-                                ( IsDone
-                                , { startupState | imageUrl = Just url }
+                            Just ( { subkey }, Just url ) ->
+                                ( True
+                                , { startupState
+                                    | image = Just { url = url, hash = subkey }
+                                  }
                                 , noPair
                                 )
 
@@ -4600,37 +4577,89 @@ startupStateProcess response state =
                     else
                         abortTriplet
             in
-            ( case done of
-                IsDoneAbort ->
-                    DbCustomRequest <|
-                        Task.perform SequenceDone
-                            (Task.succeed <| startupDone True)
+            ( if done then
+                DbCustomRequest <|
+                    Task.perform SequenceDone
+                        (Task.succeed startupDone)
 
-                IsDone ->
-                    DbCustomRequest <|
-                        Task.perform SequenceDone
-                            (Task.succeed <| startupDone False)
-
-                _ ->
-                    DbGet nextPair
+              else
+                DbGet nextPair
             , StartupState startupState2
             )
 
-        -- Not a StartupState. Shouldn't happen, but ignore
+        -- `state` is not a `StartupState`. Shouldn't happen, but ignore
         _ ->
             nullReturn
 
 
-startupDone : Bool -> Model -> ( Model, Cmd Msg )
-startupDone abort model =
-    -- TODO
-    model |> withNoCmd
+startupDone : Model -> ( Model, Cmd Msg )
+startupDone model =
+    let
+        states =
+            model.localStorageStates
+
+        startupState =
+            states.startup
+    in
+    case startupState.state of
+        StartupState state ->
+            case ( ( state.model, state.meme, state.image ), state.shownUrl ) of
+                ( ( Just savedModel, Just meme, Just image ), shownUrl ) ->
+                    let
+                        mdl =
+                            savedModelToModel savedModel model
+
+                        mdl2 =
+                            { mdl
+                                | showMemeImage = shownUrl /= Nothing
+                                , memeImageUrl = shownUrl
+                                , meme =
+                                    { meme | image = image }
+                                , localStorageStates =
+                                    { states
+                                        | startup =
+                                            { startupState
+                                                | state = initialStartupState
+                                            }
+                                    }
+                            }
+                    in
+                    mdl2 |> withNoCmd
+
+                _ ->
+                    model |> withNoCmd
+
+        _ ->
+            model |> withNoCmd
+
+
+initialPrepareImagesDialogState : StorageState
+initialPrepareImagesDialogState =
+    PrepareImagesDialogState
+        { mode = PrepareImagesIdle
+        , hashes = []
+        , thumbnails = Dict.empty
+        , names = []
+        , memeImage = Dict.empty
+        , imageMemes = Dict.empty
+        }
 
 
 prepareImagesStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
 prepareImagesStateProcess response state =
     -- TODO
     ( DbNothing, state )
+
+
+initialLoadDataState : StorageState
+initialLoadDataState =
+    LoadDataState
+        { mode = LoadDataIdle
+        , hashes = []
+        , names = []
+        , images = []
+        , memes = []
+        }
 
 
 loadDataStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
