@@ -52,7 +52,6 @@ label =
     { -- Simple
       saveImage = "saveImage"
     , getImage = "getImage"
-    , prepareMemes = "prepareMemes"
     -- Complex
     , startup = "startup"
     , prepareImages = "prepareImages"
@@ -65,8 +64,6 @@ label =
 `saveImage` loads the `images.<hash>` flag, and, if it doesn't exist, stores the `image.<hash>` URL.
 
 `getImage` loads the image associated with a thumbnail displayed in the "Images" dialog.
-
-`prepareMemes` does a `listKeys` for the names of the saved memes.
 
 ## Complex state machines
 

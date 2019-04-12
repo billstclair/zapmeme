@@ -595,7 +595,7 @@ type Msg
     | ReceiveImageFromDialog String (Maybe Value)
     | HandleUrlRequest UrlRequest
     | HandleUrlChange Url
-    | GetImageDone String String
+    | SequenceDone (Model -> ( Model, Cmd Msg ))
     | ProcessLocalStorage Value
 
 
@@ -718,9 +718,9 @@ init flags url key =
     model
         |> withCmds
             [ Task.perform getViewport Dom.getViewport
-            , get persistenceKeys.meme
-            , get persistenceKeys.model
-            , listKeys <| persistenceKeys.memes ++ "."
+            , get pK.meme
+            , get pK.model
+            , listKeys <| pK.memes ++ "."
             ]
 
 
@@ -1093,13 +1093,13 @@ updateInternal msg model =
             }
                 |> withCmds
                     (List.concat
-                        [ [ clear (encodeSubkey persistenceKeys.images hash)
-                          , clear (encodeSubkey persistenceKeys.imageurls hash)
-                          , clear (encodeSubkey persistenceKeys.thumbnails hash)
+                        [ [ clear (encodeSubkey pK.images hash)
+                          , clear (encodeSubkey pK.imageurls hash)
+                          , clear (encodeSubkey pK.thumbnails hash)
                           ]
                         , List.map
                             (\name ->
-                                clear (encodeSubkey persistenceKeys.memes name)
+                                clear (encodeSubkey pK.memes name)
                             )
                             memes
                         ]
@@ -1150,7 +1150,7 @@ updateInternal msg model =
                         (\name ->
                             let
                                 key =
-                                    encodeSubkey persistenceKeys.memes name
+                                    encodeSubkey pK.memes name
                             in
                             getLabeled labels.storageMeme key
                         )
@@ -1159,7 +1159,7 @@ updateInternal msg model =
                         (\hash ->
                             let
                                 key =
-                                    encodeSubkey persistenceKeys.imageurls hash
+                                    encodeSubkey pK.imageurls hash
                             in
                             getLabeled labels.storageImage key
                         )
@@ -1225,7 +1225,7 @@ updateInternal msg model =
             else
                 let
                     flagKey =
-                        encodeSubkey persistenceKeys.images hash
+                        encodeSubkey pK.images hash
                 in
                 { model | receiveImagesHandler = Just <| receivePutImageImages url }
                     |> withCmd (get flagKey)
@@ -1239,10 +1239,10 @@ updateInternal msg model =
         PutImageUrl hash url ->
             let
                 flagKey =
-                    encodeSubkey persistenceKeys.images hash
+                    encodeSubkey pK.images hash
 
                 key =
-                    encodeSubkey persistenceKeys.imageurls hash
+                    encodeSubkey pK.imageurls hash
             in
             -- I don't know where this comes from yet, but we don't want to save it.
             if hash == "" then
@@ -1284,7 +1284,7 @@ updateInternal msg model =
                         Ok meme ->
                             ( { mdl | receivedMeme = Just meme }
                             , get
-                                (encodeSubkey persistenceKeys.imageurls
+                                (encodeSubkey pK.imageurls
                                     meme.image.hash
                                 )
                             )
@@ -1334,7 +1334,7 @@ updateInternal msg model =
                                                 Cmd.none
 
                                              else
-                                                get persistenceKeys.shownimageurl
+                                                get pK.shownimageurl
                                             )
 
         ReceiveModel value ->
@@ -1424,7 +1424,7 @@ updateInternal msg model =
                     -- Will continue at ReceiveImageForThumbnail
                     ( model
                     , getLabeled labels.imageForThumbnail
-                        (encodeSubkey persistenceKeys.imageurls hash)
+                        (encodeSubkey pK.imageurls hash)
                     )
 
         ReceiveImageForThumbnail hash value ->
@@ -1490,7 +1490,7 @@ updateInternal msg model =
             { model | showMemeImage = False }
                 |> withCmd
                     (getLabeled labels.imageFromDialog
-                        (encodeSubkey persistenceKeys.imageurls hash)
+                        (encodeSubkey pK.imageurls hash)
                     )
 
         ReceiveImageFromDialog hash value ->
@@ -1572,7 +1572,7 @@ updateInternal msg model =
                 , memeImageUrl = Just url
             }
                 |> withCmd
-                    (put persistenceKeys.shownimageurl
+                    (put pK.shownimageurl
                         (Just <| JE.string url)
                     )
 
@@ -1593,7 +1593,7 @@ updateInternal msg model =
                     , selectedPosition = model.savedSelectedPosition
                 }
                     |> withCmd
-                        (put persistenceKeys.shownimageurl Nothing)
+                        (put pK.shownimageurl Nothing)
 
         SetImageUrl string ->
             { model
@@ -1830,7 +1830,6 @@ updateInternal msg model =
             { model | storageText = storageText }
                 |> withNoCmd
 
-        -- TODO
         LoadStorageMirror ->
             { model
                 | loadedStorage = StorageMirror [] []
@@ -1839,9 +1838,9 @@ updateInternal msg model =
             }
                 |> withCmds
                     [ listKeysLabeled labels.listStorageMemes
-                        (persistenceKeys.memes ++ ".")
+                        (pK.memes ++ ".")
                     , listKeysLabeled labels.listStorageImages
-                        (persistenceKeys.imageurls ++ ".")
+                        (pK.imageurls ++ ".")
                     ]
 
         ReceiveStorageMemeKeys keys ->
@@ -1855,7 +1854,6 @@ updateInternal msg model =
                 |> Cmd.batch
             )
 
-        -- TODO
         ReceiveStorageImageKeys keys ->
             ( model
                 |> modifyExpectedStorageKeys 0 (List.length keys + 1)
@@ -1950,7 +1948,6 @@ updateInternal msg model =
             in
             mdl |> withNoCmd
 
-        -- TODO
         StoreStorageMirror ->
             case JD.decodeString ED.storageMirrorDecoder model.storageText of
                 Err _ ->
@@ -1998,7 +1995,7 @@ updateInternal msg model =
             else if millis >= goal then
                 model
                     |> withCmd
-                        (listKeys <| persistenceKeys.memes ++ ".")
+                        (listKeys <| pK.memes ++ ".")
 
             else
                 -- I hate busy-waiting but changing Time.every is broken
@@ -2027,8 +2024,8 @@ updateInternal msg model =
         HandleUrlChange url ->
             model |> withNoCmd
 
-        GetImageDone hash url ->
-            getImageDone hash url model
+        SequenceDone wrapper ->
+            wrapper model
 
         ProcessLocalStorage value ->
             case
@@ -2267,25 +2264,25 @@ storageHandler response state model =
                 ( pkey, subkey ) =
                     decodeSubkey key
             in
-            if pkey == persistenceKeys.images then
+            if pkey == pK.images then
                 -- images exists flag, indexed as "images.<hash>"
                 ( model
                 , Task.perform (ReceiveImageKey subkey) (Task.succeed value)
                 )
 
-            else if pkey == persistenceKeys.meme then
+            else if pkey == pK.meme then
                 -- current Meme, indexed as "meme>"
                 ( model
                 , Task.perform ReceiveMeme (Task.succeed value)
                 )
 
-            else if pkey == persistenceKeys.model then
+            else if pkey == pK.model then
                 -- SavedModel, indexed as "model"
                 ( model
                 , Task.perform ReceiveModel (Task.succeed value)
                 )
 
-            else if pkey == persistenceKeys.imageurls then
+            else if pkey == pK.imageurls then
                 -- "data:..." URL for image, indexes as "imageurls.<hash>"
                 let
                     msg =
@@ -2304,7 +2301,7 @@ storageHandler response state model =
                 model
                     |> withCmd (Task.perform msg <| Task.succeed value)
 
-            else if pkey == persistenceKeys.memes then
+            else if pkey == pK.memes then
                 -- Meme, indexed as "memes.<saved name>"
                 let
                     msg =
@@ -2320,7 +2317,7 @@ storageHandler response state model =
                 model
                     |> withCmd (Task.perform msg <| Task.succeed value)
 
-            else if pkey == persistenceKeys.thumbnails then
+            else if pkey == pK.thumbnails then
                 -- "data:..." URL, indexed as "thumbnails.<hash>"
                 ( model
                 , Task.perform (ReceiveThumbnail subkey) (Task.succeed value)
@@ -3902,7 +3899,7 @@ dialogConfig model =
 
       Persistence
 
-   Keys are in `persistenceKeys`.
+   Keys are in `pK`.
 
    model: An instance of `SavedModel`.
    meme: The Current meme. An instance of `Meme`.
@@ -4014,7 +4011,7 @@ putImageFlag : String -> Cmd Msg
 putImageFlag hash =
     let
         key =
-            encodeSubkey persistenceKeys.images hash
+            encodeSubkey pK.images hash
     in
     put key justTrueValue
 
@@ -4023,7 +4020,7 @@ putImage : String -> String -> Cmd Msg
 putImage hash url =
     let
         key =
-            encodeSubkey persistenceKeys.imageurls hash
+            encodeSubkey pK.imageurls hash
     in
     put key (Just <| JE.string url)
 
@@ -4032,7 +4029,7 @@ putStorageMeme : String -> Meme -> Cmd Msg
 putStorageMeme name meme =
     let
         key =
-            encodeSubkey persistenceKeys.memes name
+            encodeSubkey pK.memes name
     in
     put key (Just <| ED.encodeMeme meme)
 
@@ -4061,7 +4058,7 @@ putModel model =
             ED.encodeSavedModel savedModel
     in
     Cmd.batch
-        [ put persistenceKeys.model (Just value)
+        [ put pK.model (Just value)
         , putMeme model.meme
         ]
 
@@ -4082,7 +4079,7 @@ putMeme meme =
             ED.encodeMeme meme
     in
     Cmd.batch
-        [ put persistenceKeys.meme (Just value)
+        [ put pK.meme (Just value)
         , Task.perform (MaybePutImageUrl urlHash) <| Task.succeed url
         ]
 
@@ -4091,7 +4088,7 @@ putSavedMeme : String -> Maybe Meme -> Cmd Msg
 putSavedMeme name meme =
     let
         key =
-            encodeSubkey persistenceKeys.memes name
+            encodeSubkey pK.memes name
 
         value =
             case meme of
@@ -4108,7 +4105,7 @@ getSavedMeme : String -> Cmd Msg
 getSavedMeme name =
     let
         key =
-            encodeSubkey persistenceKeys.memes name
+            encodeSubkey pK.memes name
     in
     get key
 
@@ -4117,7 +4114,7 @@ getMemeImage : String -> Cmd Msg
 getMemeImage name =
     let
         key =
-            encodeSubkey persistenceKeys.memes name
+            encodeSubkey pK.memes name
     in
     getLabeled labels.memeImage key
 
@@ -4145,14 +4142,14 @@ listMemes model =
 listImages : Cmd Msg
 listImages =
     listKeysLabeled labels.listImageUrls
-        (persistenceKeys.imageurls ++ ".")
+        (pK.imageurls ++ ".")
 
 
 getThumbnail : String -> Cmd Msg
 getThumbnail hash =
     let
         key =
-            encodeSubkey persistenceKeys.thumbnails hash
+            encodeSubkey pK.thumbnails hash
     in
     get key
 
@@ -4161,7 +4158,7 @@ putThumbnail : String -> String -> Cmd Msg
 putThumbnail hash url =
     let
         key =
-            encodeSubkey persistenceKeys.thumbnails hash
+            encodeSubkey pK.thumbnails hash
     in
     put key (Just <| JE.string url)
 
@@ -4180,7 +4177,6 @@ newLabels =
     { -- Simple
       saveImage = "saveImage"
     , getImage = "getImage"
-    , prepareMemes = "prepareMemes"
 
     -- Complex
     , startup = "startup"
@@ -4195,13 +4191,11 @@ type StorageState
         , hash : String
         }
     | GetImageState String
-    | PrepareMemesState
     | StartupState
-        { mode : StartupMode
-        , model : SavedModel
-        , meme : Meme
-        , image : Image
-        , shownUrl : String
+        { model : Maybe SavedModel
+        , meme : Maybe Meme
+        , imageUrl : Maybe String
+        , shownUrl : Maybe String
         }
     | PrepareImagesDialogState
         { mode : PrepareImagesDialogMode
@@ -4218,14 +4212,6 @@ type StorageState
         , images : List Image
         , memes : List Meme
         }
-
-
-type StartupMode
-    = StartupIdle
-    | StartupFetchModel
-    | StartupFetchMeme
-    | StartupFetchImage
-    | StartupFetchShownImage
 
 
 type PrepareImagesDialogMode
@@ -4250,7 +4236,6 @@ type LoadDataMode
 type alias LocalStorageStates =
     { saveImage : Sequence.State StorageState Msg
     , getImage : Sequence.State StorageState Msg
-    , prepareMemes : Sequence.State StorageState Msg
     , startup : Sequence.State StorageState Msg
     , prepareImages : Sequence.State StorageState Msg
     , loadData : Sequence.State StorageState Msg
@@ -4276,20 +4261,13 @@ initialStorageStates =
         , process = getImageStateProcess
         , sender = sequenceSender
         }
-    , prepareMemes =
-        { state = PrepareMemesState
-        , label = newLabels.prepareMemes
-        , process = prepareMemesStateProcess
-        , sender = sequenceSender
-        }
     , startup =
         { state =
             StartupState
-                { mode = StartupIdle
-                , model = dummySavedModel
-                , meme = initialMeme
-                , image = initialImage
-                , shownUrl = ""
+                { model = Nothing
+                , meme = Nothing
+                , imageUrl = Nothing
+                , shownUrl = Nothing
                 }
         , label = newLabels.startup
         , process = startupStateProcess
@@ -4350,9 +4328,6 @@ newStorageHandler response state model =
             , ( states.getImage
               , \res -> { states | getImage = res }
               )
-            , ( states.prepareMemes
-              , \res -> { states | prepareMemes = res }
-              )
             , ( states.startup
               , \res -> { states | startup = res }
               )
@@ -4380,7 +4355,7 @@ startSaveImage : String -> String -> Model -> ( Model, Cmd Msg )
 startSaveImage hash url model =
     let
         pair =
-            { prefix = persistenceKeys.images
+            { prefix = pK.images
             , subkey = hash
             }
 
@@ -4434,7 +4409,7 @@ startGetImage : String -> Model -> ( Model, Cmd Msg )
 startGetImage hash model =
     let
         pair =
-            { prefix = persistenceKeys.imageurls
+            { prefix = pK.imageurls
             , subkey = hash
             }
 
@@ -4466,7 +4441,8 @@ getImageStateProcess response state =
             case Sequence.decodeExpectedDbGot JD.string hash response of
                 Just ( pair, Just url ) ->
                     ( DbCustomRequest <|
-                        Task.perform (GetImageDone hash) (Task.succeed url)
+                        Task.perform SequenceDone
+                            (Task.succeed <| getImageDone hash url)
                     , state
                     )
 
@@ -4491,16 +4467,164 @@ getImageDone hash url model =
         |> withNoCmd
 
 
-prepareMemesStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
-prepareMemesStateProcess response state =
-    -- TODO
-    ( DbNothing, state )
+startStartup : Model -> ( Model, Cmd Msg )
+startStartup model =
+    let
+        getModelPair =
+            { prefix = pK.model
+            , subkey = ""
+            }
+
+        getShownImagePair =
+            { prefix = pK.shownimageurl
+            , subkey = ""
+            }
+
+        localStorageStates =
+            model.localStorageStates
+
+        startupState =
+            localStorageStates.startup
+
+        state2 =
+            { startupState
+                | state =
+                    StartupState
+                        { model = Nothing
+                        , meme = Nothing
+                        , imageUrl = Nothing
+                        , shownUrl = Nothing
+                        }
+            }
+    in
+    { model
+        | localStorageStates =
+            { localStorageStates | startup = state2 }
+    }
+        |> withCmd
+            (Sequence.send
+                (DbGet <|
+                    if model.showMemeImage then
+                        getModelPair
+
+                    else
+                        getShownImagePair
+                )
+                state2
+            )
+
+
+dbResponsePrefix : DbResponse -> String
+dbResponsePrefix response =
+    case response of
+        DbGot { prefix } _ ->
+            prefix
+
+        _ ->
+            ""
+
+
+type Done
+    = NotDone
+    | IsDone
+    | IsDoneAbort
 
 
 startupStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
 startupStateProcess response state =
+    let
+        nullReturn =
+            ( DbNothing, state )
+    in
+    case state of
+        StartupState startupState ->
+            let
+                prefix =
+                    dbResponsePrefix response
+
+                noPair =
+                    KeyPair "" ""
+
+                abortTriplet =
+                    ( IsDoneAbort, startupState, noPair )
+
+                ( done, startupState2, nextPair ) =
+                    if prefix == pK.shownimageurl then
+                        case Sequence.decodeExpectedDbGot JD.string "" response of
+                            Just ( _, Just url ) ->
+                                ( NotDone
+                                , { startupState | shownUrl = Just url }
+                                , KeyPair pK.model ""
+                                )
+
+                            _ ->
+                                -- If this fails, don't abort.
+                                ( NotDone
+                                , startupState
+                                , KeyPair pK.model ""
+                                )
+
+                    else if prefix == pK.model then
+                        case Sequence.decodeExpectedDbGot ED.savedModelDecoder "" response of
+                            Just ( _, Just model ) ->
+                                ( NotDone
+                                , { startupState | model = Just model }
+                                , KeyPair pK.meme ""
+                                )
+
+                            _ ->
+                                abortTriplet
+
+                    else if prefix == pK.meme then
+                        case Sequence.decodeExpectedDbGot ED.memeDecoder "" response of
+                            Just ( _, Just meme ) ->
+                                ( NotDone
+                                , { startupState | meme = Just meme }
+                                , KeyPair pK.imageurls meme.image.hash
+                                )
+
+                            _ ->
+                                abortTriplet
+
+                    else if prefix == pK.imageurls then
+                        case Sequence.decodeExpectedDbGot JD.string "" response of
+                            Just ( _, Just url ) ->
+                                ( IsDone
+                                , { startupState | imageUrl = Just url }
+                                , noPair
+                                )
+
+                            _ ->
+                                abortTriplet
+
+                    else
+                        abortTriplet
+            in
+            ( case done of
+                IsDoneAbort ->
+                    DbCustomRequest <|
+                        Task.perform SequenceDone
+                            (Task.succeed <| startupDone True)
+
+                IsDone ->
+                    DbCustomRequest <|
+                        Task.perform SequenceDone
+                            (Task.succeed <| startupDone False)
+
+                _ ->
+                    DbGet nextPair
+            , StartupState startupState2
+            )
+
+        -- Not a StartupState. Shouldn't happen, but ignore
+        _ ->
+            nullReturn
+
+
+startupDone : Bool -> Model -> ( Model, Cmd Msg )
+startupDone abort model =
     -- TODO
-    ( DbNothing, state )
+    model |> withNoCmd
 
 
 prepareImagesStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
@@ -4531,7 +4655,7 @@ labels =
 
 {-| Plural means there are subkeys, e.g. "memes.<name>","images.<hash>"
 -}
-persistenceKeys =
+pK =
     { model = "model"
     , meme = "meme"
     , shownimageurl = "shownimageurl"

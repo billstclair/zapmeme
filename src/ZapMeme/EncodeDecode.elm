@@ -19,6 +19,7 @@ module ZapMeme.EncodeDecode exposing
     , encodeStorageMirror
     , encodeWhichDialog
     , memeDecoder
+    , savedModelDecoder
     , storageMirrorDecoder
     )
 
