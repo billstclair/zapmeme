@@ -4848,14 +4848,53 @@ prepareImagesStateProcess response storageState =
                 ( request, PrepareImagesDialogState state2 )
 
         _ ->
-            -- Not PrepareImagesState, ignore it
+            -- Not PrepareImagesDialogState, ignore it
             ( DbNothing, storageState )
 
 
 getImageDialogImageSize : String -> String -> Model -> ( Model, Cmd Msg )
 getImageDialogImageSize hash url model =
-    -- TODO
-    model |> withNoCmd
+    { model
+        | thumbnailImageUrl = url
+        , thumbnailImageHash = hash
+        , thumbnailImageSize =
+            ( thumbnailImageWidth, thumbnailImageHeight )
+        , triggerThumbnailProperties =
+            model.triggerThumbnailProperties + 1
+    }
+        |> withNoCmd
+
+
+receiveThumbnailProperties : ImageProperties -> Model -> ( Model, Cmd Msg )
+receiveThumbnailProperties properties model =
+    let
+        w =
+            properties.width * thumbnailScaledHeight // properties.height
+    in
+    { model
+        | thumbnailImageSize = ( w, thumbnailScaledHeight )
+    }
+        -- Need to delay to let the Svg draw
+        |> withCmd (Task.perform GetThumbnailUrl <| Task.succeed ())
+
+
+{-| Continue here after `receiveThumbnailProperties` and a pass
+through `update` to the GetThumbnailUrl and ReceiveThumbnailUrl handlers.
+-}
+receiveThumbnailUrl : String -> Model -> ( Model, Cmd Msg )
+receiveThumbnailUrl url model =
+    let
+        hash =
+            model.thumbnailImageHash
+
+        image =
+            { url = url, hash = hash }
+
+        ( mdl, cmd ) =
+            { model | thumbnails = Dict.insert hash image model.thumbnails }
+                |> loadNextThumbnail
+    in
+    mdl |> withCmds [ cmd, putThumbnail hash url ]
 
 
 prepareImagesDone : Model -> ( Model, Cmd Msg )
