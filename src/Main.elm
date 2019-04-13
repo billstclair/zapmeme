@@ -4198,39 +4198,18 @@ type StorageState
         , shownUrl : Maybe String
         }
     | PrepareImagesDialogState
-        { mode : PrepareImagesDialogMode
-        , hashes : List String
+        { hashes : List KeyPair
         , thumbnails : Dict String Image -- hash -> image
-        , names : List String
+        , names : List KeyPair
         , memeImage : Dict String String -- name -> hash
         , imageMemes : Dict String (List String) -- hash -> names
         }
     | LoadDataState
-        { mode : LoadDataMode
-        , hashes : List String
+        { hashes : List String
         , names : List String
         , images : List Image
         , memes : List Meme
         }
-
-
-type PrepareImagesDialogMode
-    = PrepareImagesIdle
-    | PrepareImagesListImages
-    | PrepareImagesLoadThumbnail
-    | PrepareImagesLoadImage
-    | PrepareImagesComputeSize
-    | PrepareImagesGetThumbnail
-    | PrepareImagesListMemes
-    | PrepareImagesLoadMeme
-
-
-type LoadDataMode
-    = LoadDataIdle
-    | LoadDataListImages
-    | LoadDataListMemes
-    | LoadDataLoadImage
-    | LoadDataLoadMeme
 
 
 type alias LocalStorageStates =
@@ -4356,7 +4335,7 @@ startSaveImage hash url model =
                     state2
             }
       }
-    , Sequence.send (DbGet pair) state2
+    , Sequence.send state2 (DbGet pair)
     )
 
 
@@ -4405,7 +4384,7 @@ startGetImage hash model =
         | localStorageStates =
             { localStorageStates | getImage = state2 }
       }
-    , Sequence.send (DbGet pair) state2
+    , Sequence.send state2 (DbGet pair)
     )
 
 
@@ -4484,6 +4463,7 @@ startStartup model =
     }
         |> withCmd
             (Sequence.send
+                state2
                 (DbGet <|
                     if model.showMemeImage then
                         getModelPair
@@ -4491,7 +4471,6 @@ startStartup model =
                     else
                         getShownImagePair
                 )
-                state2
             )
 
 
@@ -4636,8 +4615,7 @@ startupDone model =
 initialPrepareImagesDialogState : StorageState
 initialPrepareImagesDialogState =
     PrepareImagesDialogState
-        { mode = PrepareImagesIdle
-        , hashes = []
+        { hashes = []
         , thumbnails = Dict.empty
         , names = []
         , memeImage = Dict.empty
@@ -4645,17 +4623,251 @@ initialPrepareImagesDialogState =
         }
 
 
+startPrepareImages : Model -> ( Model, Cmd Msg )
+startPrepareImages model =
+    let
+        pair =
+            { prefix = pK.imageurls
+            , subkey = "."
+            }
+
+        localStorageStates =
+            model.localStorageStates
+
+        prepareImagesState =
+            localStorageStates.prepareImages
+
+        state2 =
+            { prepareImagesState | state = initialPrepareImagesDialogState }
+    in
+    ( { model
+        | localStorageStates =
+            { localStorageStates | getImage = state2 }
+      }
+    , Sequence.send state2 (DbListKeys pair)
+    )
+
+
 prepareImagesStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
-prepareImagesStateProcess response state =
+prepareImagesStateProcess response storageState =
+    case storageState of
+        PrepareImagesDialogState state ->
+            let
+                doneTriplet =
+                    ( True, state, DbNothing )
+
+                nothingTriplet =
+                    ( False, state, DbNothing )
+
+                ( done, state2, request ) =
+                    case response of
+                        DbKeys { prefix } keys ->
+                            if prefix == pK.imageurls then
+                                case keys of
+                                    [] ->
+                                        doneTriplet
+
+                                    key :: rest ->
+                                        ( False
+                                        , { state | hashes = rest }
+                                        , DbGet key
+                                        )
+
+                            else if prefix == pK.memes then
+                                case keys of
+                                    [] ->
+                                        doneTriplet
+
+                                    key :: rest ->
+                                        ( False
+                                        , { state | names = rest }
+                                        , DbGet key
+                                        )
+
+                            else
+                                -- Can't happen, but no way to proceed.
+                                doneTriplet
+
+                        DbGot { prefix, subkey } value ->
+                            let
+                                nextThumbnail () =
+                                    case state.hashes of
+                                        [] ->
+                                            -- Done getting thumbnails. Get memes.
+                                            ( False
+                                            , state
+                                            , DbGet <| KeyPair pK.memes "."
+                                            )
+
+                                        pair :: rest ->
+                                            ( False
+                                            , { state | hashes = rest }
+                                            , DbGet pair
+                                            )
+
+                                nextMeme () =
+                                    case state.names of
+                                        [] ->
+                                            ( True
+                                            , state
+                                            , DbNothing
+                                            )
+
+                                        pair :: rest ->
+                                            ( False
+                                            , { state | names = rest }
+                                            , DbGet pair
+                                            )
+                            in
+                            if prefix == pK.thumbnails then
+                                case value of
+                                    Nothing ->
+                                        -- No thumbnail, need to create it.
+                                        -- Start by loading the image URL
+                                        ( False
+                                        , state
+                                        , DbGet
+                                            { prefix = pK.imageurls
+                                            , subkey = subkey
+                                            }
+                                        )
+
+                                    Just v ->
+                                        case JD.decodeValue JD.string v of
+                                            Err _ ->
+                                                -- Thumbnail corrupt, recreate it
+                                                ( False
+                                                , state
+                                                , DbGet
+                                                    { prefix = pK.imageurls
+                                                    , subkey = subkey
+                                                    }
+                                                )
+
+                                            Ok url ->
+                                                let
+                                                    ( _, state3, req ) =
+                                                        nextThumbnail ()
+                                                in
+                                                ( False
+                                                , { state3
+                                                    | thumbnails =
+                                                        Dict.insert subkey
+                                                            { url = url
+                                                            , hash = subkey
+                                                            }
+                                                            state3.thumbnails
+                                                  }
+                                                , req
+                                                )
+
+                            else if prefix == pK.imageurls then
+                                case value of
+                                    Nothing ->
+                                        nextThumbnail ()
+
+                                    Just v ->
+                                        case JD.decodeValue JD.string v of
+                                            Err _ ->
+                                                nextThumbnail ()
+
+                                            Ok url ->
+                                                -- Get image size,
+                                                -- then make thumbnail,
+                                                -- and continue.
+                                                ( False
+                                                , state
+                                                , DbCustomRequest <|
+                                                    Task.perform SequenceDone
+                                                        (Task.succeed <|
+                                                            getImageDialogImageSize
+                                                                subkey
+                                                                url
+                                                        )
+                                                )
+
+                            else if prefix == pK.meme then
+                                case value of
+                                    Nothing ->
+                                        nextMeme ()
+
+                                    Just v ->
+                                        case JD.decodeValue ED.memeDecoder v of
+                                            Err _ ->
+                                                nextMeme ()
+
+                                            Ok meme ->
+                                                let
+                                                    ( done2, state3, req ) =
+                                                        nextMeme ()
+
+                                                    name =
+                                                        subkey
+
+                                                    hash =
+                                                        meme.image.hash
+
+                                                    existingNames =
+                                                        Dict.get hash
+                                                            state.imageMemes
+                                                            |> Maybe.withDefault []
+
+                                                    names =
+                                                        name :: existingNames
+                                                in
+                                                ( done2
+                                                , { state3
+                                                    | memeImage =
+                                                        Dict.insert name
+                                                            hash
+                                                            state.memeImage
+                                                    , imageMemes =
+                                                        Dict.insert hash
+                                                            names
+                                                            state.imageMemes
+                                                  }
+                                                , req
+                                                )
+
+                            else
+                                -- Can't happen, but no way to proceed.
+                                doneTriplet
+
+                        _ ->
+                            -- Not DbKeys or DbGot. Ignore it.
+                            ( False, state, DbNothing )
+            in
+            if done then
+                ( DbCustomRequest <|
+                    Task.perform SequenceDone
+                        (Task.succeed prepareImagesDone)
+                , PrepareImagesDialogState state2
+                )
+
+            else
+                ( request, PrepareImagesDialogState state2 )
+
+        _ ->
+            -- Not PrepareImagesState, ignore it
+            ( DbNothing, storageState )
+
+
+getImageDialogImageSize : String -> String -> Model -> ( Model, Cmd Msg )
+getImageDialogImageSize hash url model =
     -- TODO
-    ( DbNothing, state )
+    model |> withNoCmd
+
+
+prepareImagesDone : Model -> ( Model, Cmd Msg )
+prepareImagesDone model =
+    -- TODO
+    model |> withNoCmd
 
 
 initialLoadDataState : StorageState
 initialLoadDataState =
     LoadDataState
-        { mode = LoadDataIdle
-        , hashes = []
+        { hashes = []
         , names = []
         , images = []
         , memes = []

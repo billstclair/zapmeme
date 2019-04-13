@@ -39,12 +39,13 @@ type DbRequest msg
     | DbListKeys KeyPair
     | DbClear KeyPair
     | DbCustomRequest (Cmd msg)
+    | DbBatch (List (DbRequest msg))
 
 
 type DbResponse
     = DbNoResponse
     | DbGot KeyPair (Maybe Value)
-    | DbKeys (List KeyPair)
+    | DbKeys KeyPair (List KeyPair)
 
 
 type alias State state msg =
@@ -94,13 +95,40 @@ process response state =
                 DbCustomRequest cmd ->
                     cmd
 
+                DbBatch requests ->
+                    List.map (send state) (flattenBatchList requests)
+                        |> Cmd.batch
+
                 _ ->
-                    send request state
+                    send state request
             )
 
 
-send : DbRequest msg -> State state msg -> Cmd msg
-send request state =
+flattenBatchList : List (DbRequest msg) -> List (DbRequest msg)
+flattenBatchList requests =
+    let
+        loop tail res =
+            case tail of
+                [] ->
+                    List.reverse res
+
+                req :: rest ->
+                    case req of
+                        DbBatch reqs ->
+                            loop rest <|
+                                List.concat
+                                    [ List.reverse <| flattenBatchList reqs
+                                    , res
+                                    ]
+
+                        _ ->
+                            loop rest <| req :: res
+    in
+    loop requests []
+
+
+send : State state msg -> DbRequest msg -> Cmd msg
+send state request =
     case requestToMessage state.label request of
         Just req ->
             state.sender req
@@ -144,9 +172,9 @@ responseToDbResponse response =
             , \() -> DbGot (decodePair key) value
             )
 
-        LocalStorage.ListKeysResponse { label, keys } ->
+        LocalStorage.ListKeysResponse { label, prefix, keys } ->
             ( Maybe.withDefault "" label
-            , \() -> DbKeys <| List.map decodePair keys
+            , \() -> DbKeys (decodePair prefix) <| List.map decodePair keys
             )
 
         _ ->
@@ -174,7 +202,7 @@ requestToMessage label request =
         DbClear pair ->
             Just <| LocalStorage.clear label
 
-        DbCustomRequest _ ->
+        _ ->
             Nothing
 
 
