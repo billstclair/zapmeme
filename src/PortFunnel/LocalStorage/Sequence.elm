@@ -15,17 +15,26 @@ module PortFunnel.LocalStorage.Sequence exposing
     , DbResponse(..)
     , KeyPair
     , State
+    , dbResponseToValue
     , decodeExpectedDbGot
     , inject
+    , injectTask
     , multiProcess
     , process
     , send
     )
 
+{-| Make it easier to create complex state machines from `LocalStorage` contents.
+
+This is too complicated for an example here, but see `ZapMeme.Sequencer` (needs link) for a real-life example.
+
+-}
+
 import Json.Decode as JD exposing (Decoder, Value)
 import Json.Encode as JE
 import PortFunnel
 import PortFunnel.LocalStorage as LocalStorage
+import Task exposing (Task)
 
 
 type alias KeyPair =
@@ -105,70 +114,6 @@ process response state =
                 _ ->
                     send state request
             )
-
-
-{-| If you receive something outside of a LocalStorage return,
-
-and want to get it back into your state machine, use this.
-
-It returns a `Cmd` that will make it seem as if the given DbResponse was received from LocalStorage.
-
-    inject response subPortWrapper state
-
-The subPortWrapper is the Msg that handles your PortFunnel subscription port.
-
-This function currently knows about the internals of how PortFunnel.LocalStorage encodes its messages over the wire to/from the ports.
-
--}
-inject : DbResponse -> (Value -> Cmd msg) -> State state msg -> Cmd msg
-inject response subPortWrapper state =
-    if response == DbNoResponse then
-        Cmd.none
-
-    else
-        let
-            label =
-                state.label
-
-            ( tag, args ) =
-                case response of
-                    DbGot pair value ->
-                        ( "got"
-                        , JE.object
-                            [ ( "label", JE.string label )
-                            , ( "key", JE.string <| encodePair pair )
-                            , ( "value"
-                              , case value of
-                                    Nothing ->
-                                        JE.null
-
-                                    Just v ->
-                                        v
-                              )
-                            ]
-                        )
-
-                    DbKeys pair keys ->
-                        ( "keys"
-                        , JE.object
-                            [ ( "label", JE.string label )
-                            , ( "prefix", JE.string <| encodePair pair )
-                            , ( "keys"
-                              , List.map encodePair keys
-                                    |> JE.list JE.string
-                              )
-                            ]
-                        )
-
-                    _ ->
-                        ( "", JE.null )
-        in
-        { moduleName = LocalStorage.moduleName
-        , tag = tag
-        , args = args
-        }
-            |> PortFunnel.encodeGenericMessage
-            |> subPortWrapper
 
 
 flattenBatchList : List (DbRequest msg) -> List (DbRequest msg)
@@ -303,3 +248,77 @@ decodePair key =
 
         prefix :: tail ->
             KeyPair prefix (String.join "." tail)
+
+
+{-| Turn a DbResponse into the Value that would create it,
+
+if received from the LocalStorage port code, in response to a `DbGet` or `DbListKeys` request.
+
+`NoResponse` is treated as `DbGot` with empty string components in its `KeyPair` and `Nothing` as its value. You will likely never want to do that.
+
+-}
+dbResponseToValue : String -> DbResponse -> Value
+dbResponseToValue label response =
+    let
+        wrap tag args =
+            { moduleName = LocalStorage.moduleName
+            , tag = tag
+            , args = args
+            }
+                |> PortFunnel.encodeGenericMessage
+    in
+    case response of
+        DbGot pair value ->
+            wrap "got" <|
+                JE.object
+                    [ ( "label", JE.string label )
+                    , ( "key", JE.string <| encodePair pair )
+                    , ( "value"
+                      , case value of
+                            Nothing ->
+                                JE.null
+
+                            Just v ->
+                                v
+                      )
+                    ]
+
+        DbKeys pair keys ->
+            wrap "keys" <|
+                JE.object
+                    [ ( "label", JE.string label )
+                    , ( "prefix", JE.string <| encodePair pair )
+                    , ( "keys"
+                      , List.map encodePair keys
+                            |> JE.list JE.string
+                      )
+                    ]
+
+        DbNoResponse ->
+            dbResponseToValue label <| DbGot (KeyPair "" "") Nothing
+
+
+{-| If you receive something outside of a LocalStorage return,
+
+and want to get it back into your state machine, use this.
+
+It returns a `Task` that, if you send it with your LocalStorage `sub` port message, will make it seem as if the given DbResponse was received from LocalStorage.
+
+It's a trivial task wrapper on the result of dbResponseToValue, using `label` property of the `State`.
+
+-}
+injectTask : State state msg -> DbResponse -> Task Never Value
+injectTask state response =
+    dbResponseToValue state.label response
+        |> Task.succeed
+
+
+{-| Call `injectTask`, and use `Task.perform` to turn that `Task` into a `Cmd`.
+
+The `(Value -> msg)` function will usually be the `Msg` that receives subscription input from your LocalStorage port.
+
+-}
+inject : (Value -> msg) -> State state msg -> DbResponse -> Cmd msg
+inject wrapper state response =
+    injectTask state response
+        |> Task.perform wrapper

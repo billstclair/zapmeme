@@ -86,12 +86,6 @@ import List.Extra as LE
 import MD5
 import Markdown
 import PortFunnel.LocalStorage as LocalStorage
-import PortFunnel.LocalStorage.Sequence as Sequence
-    exposing
-        ( DbRequest(..)
-        , DbResponse(..)
-        , KeyPair
-        )
 import PortFunnels exposing (FunnelDict, Handler(..))
 import Set exposing (Set)
 import Svg exposing (Svg, foreignObject, g, line, rect, svg)
@@ -122,6 +116,7 @@ import Time exposing (Posix)
 import Url exposing (Url)
 import ZapMeme.Data exposing (data)
 import ZapMeme.EncodeDecode as ED
+import ZapMeme.Sequencer as Sequencer exposing (LocalStorageStates)
 import ZapMeme.Types
     exposing
         ( Caption
@@ -372,6 +367,10 @@ type ButtonOperation
     | DecrementButton
 
 
+type WrappedModel
+    = WrappedModel Model
+
+
 type alias Model =
     { meme : Meme
     , dialog : WhichDialog
@@ -386,7 +385,7 @@ type alias Model =
     , showHelp : Bool
 
     -- Below here is not persistent.
-    , localStorageStates : LocalStorageStates
+    , localStorageStates : LocalStorageStates WrappedModel Msg
     , windowSize : ( Int, Int )
     , deletedCaption : Maybe Caption
     , controller : Controller
@@ -595,7 +594,7 @@ type Msg
     | ReceiveImageFromDialog String (Maybe Value)
     | HandleUrlRequest UrlRequest
     | HandleUrlChange Url
-    | SequenceDone (Model -> ( Model, Cmd Msg ))
+    | SequenceDone (WrappedModel -> ( WrappedModel, Cmd Msg ))
     | ProcessLocalStorage Value
 
 
@@ -688,7 +687,7 @@ init flags url key =
                     ()
             , showMemeImage = False
             , showHelp = False
-            , localStorageStates = initialStorageStates
+            , localStorageStates = Sequencer.initialStorageStates sequencerWrappers
             , windowSize = ( 2000, 2000 )
             , subscription = Nothing
             , fontDict = safeFontDict
@@ -2025,7 +2024,11 @@ updateInternal msg model =
             model |> withNoCmd
 
         SequenceDone wrapper ->
-            wrapper model
+            let
+                ( WrappedModel mdl, cmd ) =
+                    wrapper (WrappedModel model)
+            in
+            ( mdl, cmd )
 
         ProcessLocalStorage value ->
             case
@@ -2249,6 +2252,8 @@ getCmdPort moduleName _ =
     PortFunnels.getCmdPort ProcessLocalStorage moduleName False
 
 
+{-| The `model` parameter is necessary here to make PortFunnel happy.
+-}
 localStorageSend : LocalStorage.Message -> model -> Cmd Msg
 localStorageSend message model =
     LocalStorage.send (getCmdPort LocalStorage.moduleName model)
@@ -3366,21 +3371,6 @@ renderSvgImage wi hi url =
         []
 
 
-thumbnailScaledHeight : Int
-thumbnailScaledHeight =
-    50
-
-
-thumbnailImageWidth : Int
-thumbnailImageWidth =
-    144
-
-
-thumbnailImageHeight : Int
-thumbnailImageHeight =
-    100
-
-
 renderThumbnailImage : Int -> Int -> String -> Svg Msg
 renderThumbnailImage w h url =
     Svg.image
@@ -4163,763 +4153,7 @@ putThumbnail hash url =
     put key (Just <| JE.string url)
 
 
-
-{-
-
-   State machines for LocalStorage.
-
-   See state-machines.md.
-
--}
-
-
-newLabels =
-    { -- Simple
-      saveImage = "saveImage"
-    , getImage = "getImage"
-
-    -- Complex
-    , startup = "startup"
-    , prepareImages = "prepareImages"
-    , loadData = "loadData"
-    }
-
-
-type StorageState
-    = SaveImageState
-        { url : String
-        , hash : String
-        }
-    | GetImageState String
-    | StartupState
-        { model : Maybe SavedModel
-        , meme : Maybe Meme
-        , image : Maybe Image
-        , shownUrl : Maybe String
-        }
-    | PrepareImagesDialogState
-        { hashes : List KeyPair
-        , thumbnails : Dict String Image -- hash -> image
-        , names : List KeyPair
-        , memeImage : Dict String String -- name -> hash
-        , imageMemes : Dict String (List String) -- hash -> names
-        }
-    | LoadDataState
-        { hashes : List String
-        , names : List String
-        , images : List Image
-        , memes : List Meme
-        }
-
-
-type alias LocalStorageStates =
-    { saveImage : Sequence.State StorageState Msg
-    , getImage : Sequence.State StorageState Msg
-    , startup : Sequence.State StorageState Msg
-    , prepareImages : Sequence.State StorageState Msg
-    , loadData : Sequence.State StorageState Msg
-    }
-
-
-sequenceSender : LocalStorage.Message -> Cmd Msg
-sequenceSender message =
-    localStorageSend message ()
-
-
-initialStorageStates : LocalStorageStates
-initialStorageStates =
-    { saveImage =
-        { state = SaveImageState { url = "", hash = "" }
-        , label = newLabels.saveImage
-        , process = saveImageStateProcess
-        , sender = sequenceSender
-        }
-    , getImage =
-        { state = GetImageState ""
-        , label = newLabels.getImage
-        , process = getImageStateProcess
-        , sender = sequenceSender
-        }
-    , startup =
-        { state = initialStartupState
-        , label = newLabels.startup
-        , process = startupStateProcess
-        , sender = sequenceSender
-        }
-    , prepareImages =
-        { state = initialPrepareImagesDialogState
-        , label = newLabels.prepareImages
-        , process = prepareImagesStateProcess
-        , sender = sequenceSender
-        }
-    , loadData =
-        { state = initialLoadDataState
-        , label = newLabels.loadData
-        , process = loadDataStateProcess
-        , sender = sequenceSender
-        }
-    }
-
-
-{-| This is the reason I wrote `PortFunnel.LocalStorage.Sequence`.
-
-To add a new process, you just have to add it to to `newLabels`,
-`StorageState`, `LocalStorageStates`, & `initialStorageStates`, write
-start, processing, and done functions, and add an element to the
-`Sequence.multiProcess` call below.
-
-Mostly data driven, as an old lisper likes it.
-
--}
-newStorageHandler : LocalStorage.Response -> PortFunnels.State -> Model -> ( Model, Cmd Msg )
-newStorageHandler response state model =
-    let
-        states =
-            model.localStorageStates
-    in
-    case
-        Sequence.multiProcess
-            response
-            [ ( states.saveImage
-              , \res -> { states | saveImage = res }
-              )
-            , ( states.getImage
-              , \res -> { states | getImage = res }
-              )
-            , ( states.startup
-              , \res -> { states | startup = res }
-              )
-            , ( states.prepareImages
-              , \res -> { states | prepareImages = res }
-              )
-            , ( states.loadData
-              , \res -> { states | loadData = res }
-              )
-            ]
-    of
-        Just ( res, setter, cmd ) ->
-            { model | localStorageStates = setter res }
-                |> withCmd cmd
-
-        _ ->
-            model |> withNoCmd
-
-
-type alias DbRequest =
-    Sequence.DbRequest Msg
-
-
-startSaveImage : String -> String -> Model -> ( Model, Cmd Msg )
-startSaveImage hash url model =
-    let
-        pair =
-            { prefix = pK.images
-            , subkey = hash
-            }
-
-        states =
-            model.localStorageStates
-
-        saveImageState =
-            states.saveImage
-
-        state2 =
-            { saveImageState
-                | state = SaveImageState { url = url, hash = hash }
-            }
-    in
-    ( { model
-        | localStorageStates =
-            { states
-                | saveImage =
-                    state2
-            }
-      }
-    , Sequence.send state2 (DbGet pair)
-    )
-
-
-saveImageStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
-saveImageStateProcess response state =
-    let
-        nullReturn =
-            ( DbNothing, state )
-    in
-    case state of
-        SaveImageState { url, hash } ->
-            case Sequence.decodeExpectedDbGot JD.bool hash response of
-                Just ( _, Just True ) ->
-                    nullReturn
-
-                Just ( pair, _ ) ->
-                    ( DbPut pair <| JE.string url
-                    , state
-                    )
-
-                _ ->
-                    nullReturn
-
-        _ ->
-            nullReturn
-
-
-startGetImage : String -> Model -> ( Model, Cmd Msg )
-startGetImage hash model =
-    let
-        pair =
-            { prefix = pK.imageurls
-            , subkey = hash
-            }
-
-        localStorageStates =
-            model.localStorageStates
-
-        getImageState =
-            localStorageStates.getImage
-
-        state2 =
-            { getImageState | state = GetImageState hash }
-    in
-    ( { model
-        | localStorageStates =
-            { localStorageStates | getImage = state2 }
-      }
-    , Sequence.send state2 (DbGet pair)
-    )
-
-
-getImageStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
-getImageStateProcess response state =
-    let
-        nullReturn =
-            ( DbNothing, state )
-    in
-    case state of
-        GetImageState hash ->
-            case Sequence.decodeExpectedDbGot JD.string hash response of
-                Just ( pair, Just url ) ->
-                    ( DbCustomRequest <|
-                        Task.perform SequenceDone
-                            (Task.succeed <| getImageDone hash url)
-                    , state
-                    )
-
-                _ ->
-                    nullReturn
-
-        _ ->
-            nullReturn
-
-
-getImageDone : String -> String -> Model -> ( Model, Cmd Msg )
-getImageDone hash url model =
-    let
-        meme =
-            model.meme
-    in
-    { model
-        | showMemeImage = False
-        , meme = { meme | image = { url = url, hash = hash } }
-        , triggerImageProperties = model.triggerImageProperties + 1
-    }
-        |> withNoCmd
-
-
-initialStartupState : StorageState
-initialStartupState =
-    StartupState
-        { model = Nothing
-        , meme = Nothing
-        , image = Nothing
-        , shownUrl = Nothing
-        }
-
-
-startStartup : Model -> ( Model, Cmd Msg )
-startStartup model =
-    let
-        getModelPair =
-            { prefix = pK.model
-            , subkey = ""
-            }
-
-        getShownImagePair =
-            { prefix = pK.shownimageurl
-            , subkey = ""
-            }
-
-        localStorageStates =
-            model.localStorageStates
-
-        startupState =
-            localStorageStates.startup
-
-        state2 =
-            { startupState | state = initialStartupState }
-    in
-    { model
-        | localStorageStates =
-            { localStorageStates | startup = state2 }
-    }
-        |> withCmd
-            (Sequence.send
-                state2
-                (DbGet <|
-                    if model.showMemeImage then
-                        getModelPair
-
-                    else
-                        getShownImagePair
-                )
-            )
-
-
-dbResponsePrefix : DbResponse -> String
-dbResponsePrefix response =
-    case response of
-        DbGot { prefix } _ ->
-            prefix
-
-        _ ->
-            ""
-
-
-startupStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
-startupStateProcess response state =
-    let
-        nullReturn =
-            ( DbNothing, state )
-    in
-    case state of
-        StartupState startupState ->
-            let
-                prefix =
-                    dbResponsePrefix response
-
-                noPair =
-                    KeyPair "" ""
-
-                abortTriplet =
-                    ( True, startupState, noPair )
-
-                ( done, startupState2, nextPair ) =
-                    if prefix == pK.shownimageurl then
-                        case Sequence.decodeExpectedDbGot JD.string "" response of
-                            Just ( _, Just url ) ->
-                                ( False
-                                , { startupState | shownUrl = Just url }
-                                , KeyPair pK.model ""
-                                )
-
-                            _ ->
-                                -- If this fails, don't abort.
-                                ( False
-                                , startupState
-                                , KeyPair pK.model ""
-                                )
-
-                    else if prefix == pK.model then
-                        case Sequence.decodeExpectedDbGot ED.savedModelDecoder "" response of
-                            Just ( _, Just model ) ->
-                                ( False
-                                , { startupState | model = Just model }
-                                , KeyPair pK.meme ""
-                                )
-
-                            _ ->
-                                abortTriplet
-
-                    else if prefix == pK.meme then
-                        case Sequence.decodeExpectedDbGot ED.memeDecoder "" response of
-                            Just ( _, Just meme ) ->
-                                ( False
-                                , { startupState | meme = Just meme }
-                                , KeyPair pK.imageurls meme.image.hash
-                                )
-
-                            _ ->
-                                abortTriplet
-
-                    else if prefix == pK.imageurls then
-                        case Sequence.decodeExpectedDbGot JD.string "" response of
-                            Just ( { subkey }, Just url ) ->
-                                ( True
-                                , { startupState
-                                    | image = Just { url = url, hash = subkey }
-                                  }
-                                , noPair
-                                )
-
-                            _ ->
-                                abortTriplet
-
-                    else
-                        abortTriplet
-            in
-            ( if done then
-                DbCustomRequest <|
-                    Task.perform SequenceDone
-                        (Task.succeed startupDone)
-
-              else
-                DbGet nextPair
-            , StartupState startupState2
-            )
-
-        -- `state` is not a `StartupState`. Shouldn't happen, but ignore
-        _ ->
-            nullReturn
-
-
-startupDone : Model -> ( Model, Cmd Msg )
-startupDone model =
-    let
-        states =
-            model.localStorageStates
-
-        startupState =
-            states.startup
-    in
-    case startupState.state of
-        StartupState state ->
-            case ( ( state.model, state.meme, state.image ), state.shownUrl ) of
-                ( ( Just savedModel, Just meme, Just image ), shownUrl ) ->
-                    let
-                        mdl =
-                            savedModelToModel savedModel model
-
-                        mdl2 =
-                            { mdl
-                                | showMemeImage = shownUrl /= Nothing
-                                , memeImageUrl = shownUrl
-                                , meme =
-                                    { meme | image = image }
-                                , localStorageStates =
-                                    { states
-                                        | startup =
-                                            { startupState
-                                                | state = initialStartupState
-                                            }
-                                    }
-                            }
-                    in
-                    mdl2 |> withNoCmd
-
-                _ ->
-                    model |> withNoCmd
-
-        _ ->
-            model |> withNoCmd
-
-
-initialPrepareImagesDialogState : StorageState
-initialPrepareImagesDialogState =
-    PrepareImagesDialogState
-        { hashes = []
-        , thumbnails = Dict.empty
-        , names = []
-        , memeImage = Dict.empty
-        , imageMemes = Dict.empty
-        }
-
-
-startPrepareImages : Model -> ( Model, Cmd Msg )
-startPrepareImages model =
-    let
-        pair =
-            { prefix = pK.imageurls
-            , subkey = "."
-            }
-
-        localStorageStates =
-            model.localStorageStates
-
-        prepareImagesState =
-            localStorageStates.prepareImages
-
-        state2 =
-            { prepareImagesState | state = initialPrepareImagesDialogState }
-    in
-    ( { model
-        | localStorageStates =
-            { localStorageStates | getImage = state2 }
-      }
-    , Sequence.send state2 (DbListKeys pair)
-    )
-
-
-prepareImagesStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
-prepareImagesStateProcess response storageState =
-    case storageState of
-        PrepareImagesDialogState state ->
-            let
-                doneTriplet =
-                    ( True, state, DbNothing )
-
-                nothingTriplet =
-                    ( False, state, DbNothing )
-
-                ( done, state2, request ) =
-                    case response of
-                        DbKeys { prefix } keys ->
-                            if prefix == pK.imageurls then
-                                case keys of
-                                    [] ->
-                                        doneTriplet
-
-                                    key :: rest ->
-                                        ( False
-                                        , { state | hashes = rest }
-                                        , DbGet key
-                                        )
-
-                            else if prefix == pK.memes then
-                                case keys of
-                                    [] ->
-                                        doneTriplet
-
-                                    key :: rest ->
-                                        ( False
-                                        , { state | names = rest }
-                                        , DbGet key
-                                        )
-
-                            else
-                                -- Can't happen, but no way to proceed.
-                                doneTriplet
-
-                        DbGot { prefix, subkey } value ->
-                            let
-                                nextThumbnail () =
-                                    case state.hashes of
-                                        [] ->
-                                            -- Done getting thumbnails. Get memes.
-                                            ( False
-                                            , state
-                                            , DbGet <| KeyPair pK.memes "."
-                                            )
-
-                                        pair :: rest ->
-                                            ( False
-                                            , { state | hashes = rest }
-                                            , DbGet pair
-                                            )
-
-                                nextMeme () =
-                                    case state.names of
-                                        [] ->
-                                            ( True
-                                            , state
-                                            , DbNothing
-                                            )
-
-                                        pair :: rest ->
-                                            ( False
-                                            , { state | names = rest }
-                                            , DbGet pair
-                                            )
-                            in
-                            if prefix == pK.thumbnails then
-                                case value of
-                                    Nothing ->
-                                        -- No thumbnail, need to create it.
-                                        -- Start by loading the image URL
-                                        ( False
-                                        , state
-                                        , DbGet
-                                            { prefix = pK.imageurls
-                                            , subkey = subkey
-                                            }
-                                        )
-
-                                    Just v ->
-                                        case JD.decodeValue JD.string v of
-                                            Err _ ->
-                                                -- Thumbnail corrupt, recreate it
-                                                ( False
-                                                , state
-                                                , DbGet
-                                                    { prefix = pK.imageurls
-                                                    , subkey = subkey
-                                                    }
-                                                )
-
-                                            Ok url ->
-                                                let
-                                                    ( _, state3, req ) =
-                                                        nextThumbnail ()
-                                                in
-                                                ( False
-                                                , { state3
-                                                    | thumbnails =
-                                                        Dict.insert subkey
-                                                            { url = url
-                                                            , hash = subkey
-                                                            }
-                                                            state3.thumbnails
-                                                  }
-                                                , req
-                                                )
-
-                            else if prefix == pK.imageurls then
-                                case value of
-                                    Nothing ->
-                                        nextThumbnail ()
-
-                                    Just v ->
-                                        case JD.decodeValue JD.string v of
-                                            Err _ ->
-                                                nextThumbnail ()
-
-                                            Ok url ->
-                                                -- Get image size,
-                                                -- then make thumbnail,
-                                                -- and continue.
-                                                ( False
-                                                , state
-                                                , DbCustomRequest <|
-                                                    Task.perform SequenceDone
-                                                        (Task.succeed <|
-                                                            getImageDialogImageSize
-                                                                subkey
-                                                                url
-                                                        )
-                                                )
-
-                            else if prefix == pK.meme then
-                                case value of
-                                    Nothing ->
-                                        nextMeme ()
-
-                                    Just v ->
-                                        case JD.decodeValue ED.memeDecoder v of
-                                            Err _ ->
-                                                nextMeme ()
-
-                                            Ok meme ->
-                                                let
-                                                    ( done2, state3, req ) =
-                                                        nextMeme ()
-
-                                                    name =
-                                                        subkey
-
-                                                    hash =
-                                                        meme.image.hash
-
-                                                    existingNames =
-                                                        Dict.get hash
-                                                            state.imageMemes
-                                                            |> Maybe.withDefault []
-
-                                                    names =
-                                                        name :: existingNames
-                                                in
-                                                ( done2
-                                                , { state3
-                                                    | memeImage =
-                                                        Dict.insert name
-                                                            hash
-                                                            state.memeImage
-                                                    , imageMemes =
-                                                        Dict.insert hash
-                                                            names
-                                                            state.imageMemes
-                                                  }
-                                                , req
-                                                )
-
-                            else
-                                -- Can't happen, but no way to proceed.
-                                doneTriplet
-
-                        _ ->
-                            -- Not DbKeys or DbGot. Ignore it.
-                            ( False, state, DbNothing )
-            in
-            if done then
-                ( DbCustomRequest <|
-                    Task.perform SequenceDone
-                        (Task.succeed prepareImagesDone)
-                , PrepareImagesDialogState state2
-                )
-
-            else
-                ( request, PrepareImagesDialogState state2 )
-
-        _ ->
-            -- Not PrepareImagesDialogState, ignore it
-            ( DbNothing, storageState )
-
-
-getImageDialogImageSize : String -> String -> Model -> ( Model, Cmd Msg )
-getImageDialogImageSize hash url model =
-    { model
-        | thumbnailImageUrl = url
-        , thumbnailImageHash = hash
-        , thumbnailImageSize =
-            ( thumbnailImageWidth, thumbnailImageHeight )
-        , triggerThumbnailProperties =
-            model.triggerThumbnailProperties + 1
-    }
-        |> withNoCmd
-
-
-receiveThumbnailProperties : ImageProperties -> Model -> ( Model, Cmd Msg )
-receiveThumbnailProperties properties model =
-    let
-        w =
-            properties.width * thumbnailScaledHeight // properties.height
-    in
-    { model
-        | thumbnailImageSize = ( w, thumbnailScaledHeight )
-    }
-        -- Need to delay to let the Svg draw
-        |> withCmd (Task.perform GetThumbnailUrl <| Task.succeed ())
-
-
-{-| Continue here after `receiveThumbnailProperties` and a pass
-through `update` to the GetThumbnailUrl and ReceiveThumbnailUrl handlers.
--}
-receiveThumbnailUrl : String -> Model -> ( Model, Cmd Msg )
-receiveThumbnailUrl url model =
-    let
-        hash =
-            model.thumbnailImageHash
-
-        image =
-            { url = url, hash = hash }
-
-        ( mdl, cmd ) =
-            { model | thumbnails = Dict.insert hash image model.thumbnails }
-                |> loadNextThumbnail
-    in
-    mdl |> withCmds [ cmd, putThumbnail hash url ]
-
-
-prepareImagesDone : Model -> ( Model, Cmd Msg )
-prepareImagesDone model =
-    -- TODO
-    model |> withNoCmd
-
-
-initialLoadDataState : StorageState
-initialLoadDataState =
-    LoadDataState
-        { hashes = []
-        , names = []
-        , images = []
-        , memes = []
-        }
-
-
-loadDataStateProcess : DbResponse -> StorageState -> ( DbRequest, StorageState )
-loadDataStateProcess response state =
-    -- TODO
-    ( DbNothing, state )
-
-
-{-| Old labels. Will be replaced by `newLabels`
+{-| Old labels. Will be replaced by `Sequencer.labels`
 -}
 labels =
     { imageForThumbnail = "imageForThumbnail"
@@ -4944,3 +4178,121 @@ pK =
     , imageurls = "imageurls"
     , thumbnails = "thumbnails"
     }
+
+
+
+---
+--- Interface to ZapMeme.Sequencer
+---
+
+
+sequencerWrappers : Sequencer.Wrappers WrappedModel Msg
+sequencerWrappers =
+    { sender = \message -> localStorageSend message ()
+    , injector = ProcessLocalStorage
+    , localStorageStates =
+        \(WrappedModel model) -> model.localStorageStates
+    , setLocalStorageStates =
+        \states (WrappedModel model) ->
+            WrappedModel { model | localStorageStates = states }
+    , sequenceDone = SequenceDone
+    }
+
+
+{-| Result of Sequencer.startGetImage
+-}
+getImageDone : Image -> Model -> ( Model, Cmd Msg )
+getImageDone image model =
+    let
+        meme =
+            model.meme
+    in
+    { model
+        | showMemeImage = False
+        , meme = { meme | image = image }
+        , triggerImageProperties = model.triggerImageProperties + 1
+    }
+        |> withNoCmd
+
+
+{-| Result of Sequencer.startStartup
+-}
+startupDone : SavedModel -> Meme -> Maybe String -> Model -> ( Model, Cmd Msg )
+startupDone savedModel meme maybeShownUrl model =
+    let
+        mdl =
+            savedModelToModel savedModel model
+
+        shownUrl =
+            if model.showMemeImage then
+                maybeShownUrl
+
+            else
+                Nothing
+    in
+    { mdl
+        | showMemeImage = shownUrl /= Nothing
+        , memeImageUrl = shownUrl
+        , meme = meme
+    }
+        |> withNoCmd
+
+
+
+--- Internal processing for Sequencer.startPrepareImages
+
+
+thumbnailImageWidth : Int
+thumbnailImageWidth =
+    144
+
+
+thumbnailImageHeight : Int
+thumbnailImageHeight =
+    100
+
+
+getImageDialogImageSize : String -> String -> Model -> ( Model, Cmd Msg )
+getImageDialogImageSize hash url model =
+    { model
+        | thumbnailImageUrl = url
+        , thumbnailImageHash = hash
+        , thumbnailImageSize =
+            ( thumbnailImageWidth, thumbnailImageHeight )
+        , triggerThumbnailProperties =
+            model.triggerThumbnailProperties + 1
+    }
+        |> withNoCmd
+
+
+thumbnailScaledHeight : Int
+thumbnailScaledHeight =
+    50
+
+
+receiveThumbnailProperties : ImageProperties -> Model -> ( Model, Cmd Msg )
+receiveThumbnailProperties properties model =
+    let
+        w =
+            properties.width * thumbnailScaledHeight // properties.height
+    in
+    { model
+        | thumbnailImageSize = ( w, thumbnailScaledHeight )
+    }
+        -- Need to delay to let the Svg draw
+        |> withCmd (Task.perform GetThumbnailUrl <| Task.succeed ())
+
+
+{-| Continue here after `receiveThumbnailProperties` and a pass
+through `update` to the GetThumbnailUrl and ReceiveThumbnailUrl handlers.
+-}
+receiveThumbnailUrl : String -> Model -> ( Model, Cmd Msg )
+receiveThumbnailUrl url model =
+    let
+        ( WrappedModel mdl, cmd ) =
+            Sequencer.injectThumbnail sequencerWrappers
+                url
+                model.thumbnailImageHash
+                (WrappedModel model)
+    in
+    ( mdl, cmd )
