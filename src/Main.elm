@@ -2023,10 +2023,10 @@ updateInternal msg model =
         HandleUrlChange url ->
             model |> withNoCmd
 
-        SequenceDone wrapper ->
+        SequenceDone updater ->
             let
                 ( WrappedModel mdl, cmd ) =
-                    wrapper (WrappedModel model)
+                    updater (WrappedModel model)
             in
             ( mdl, cmd )
 

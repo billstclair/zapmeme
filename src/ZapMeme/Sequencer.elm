@@ -96,7 +96,6 @@ type StorageState model msg
         , memeImage : Dict String String -- name -> hash
         , imageMemes : Dict String (List String) -- hash -> names
         , imageSizeGetter : String -> String -> model -> ( model, Cmd msg )
-        , receiver : List Image -> Dict String (List Meme) -> model -> ( model, Cmd msg )
         , wrappers : Wrappers model msg
         }
     | LoadDataState
@@ -214,9 +213,14 @@ storageHandler wrappers response state model =
 
 initialSaveImageState : StorageState model msg
 initialSaveImageState =
+    makeSaveImageState "" ""
+
+
+makeSaveImageState : String -> String -> StorageState model msg
+makeSaveImageState url hash =
     SaveImageState
-        { url = ""
-        , hash = ""
+        { url = url
+        , hash = hash
         }
 
 
@@ -236,7 +240,7 @@ startSaveImage wrappers hash url model =
 
         state2 =
             { saveImageState
-                | state = SaveImageState { url = url, hash = hash }
+                | state = makeSaveImageState url hash
             }
     in
     ( wrappers.setLocalStorageStates
@@ -272,9 +276,14 @@ saveImageStateProcess response storageState =
 
 initialGetImageState : Wrappers model msg -> StorageState model msg
 initialGetImageState wrappers =
+    makeGetImageState wrappers "" (\_ model -> ( model, Cmd.none ))
+
+
+makeGetImageState : Wrappers model msg -> String -> (Image -> model -> ( model, Cmd msg )) -> StorageState model msg
+makeGetImageState wrappers hash receiver =
     GetImageState
-        { hash = ""
-        , receiver = \_ model -> ( model, Cmd.none )
+        { hash = hash
+        , receiver = receiver
         , wrappers = wrappers
         }
 
@@ -292,28 +301,18 @@ startGetImage wrappers receiver hash model =
 
         state =
             localStorageStates.getImage
-    in
-    case state.state of
-        GetImageState getImageState ->
-            let
-                state2 =
-                    { state
-                        | state =
-                            GetImageState
-                                { getImageState
-                                    | hash = hash
-                                    , receiver = receiver
-                                }
-                    }
-            in
-            ( wrappers.setLocalStorageStates
-                (LocalStorageStates { localStorageStates | getImage = state2 })
-                model
-            , Sequence.send state2 (DbGet pair)
-            )
 
-        _ ->
-            ( model, Cmd.none )
+        state2 =
+            { state
+                | state =
+                    makeGetImageState wrappers hash receiver
+            }
+    in
+    ( wrappers.setLocalStorageStates
+        (LocalStorageStates { localStorageStates | getImage = state2 })
+        model
+    , Sequence.send state2 (DbGet pair)
+    )
 
 
 getImageStateProcess : DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
@@ -346,12 +345,17 @@ getImageDone receiver hash url model =
 
 initialStartupState : Wrappers model msg -> StorageState model msg
 initialStartupState wrappers =
+    makeStartupState wrappers (\_ _ _ model -> ( model, Cmd.none ))
+
+
+makeStartupState : Wrappers model msg -> (SavedModel -> Meme -> Maybe String -> model -> ( model, Cmd msg )) -> StorageState model msg
+makeStartupState wrappers receiver =
     StartupState
         { model = Nothing
         , meme = Nothing
         , image = Nothing
         , shownUrl = Nothing
-        , receiver = \_ _ _ model -> ( model, Cmd.none )
+        , receiver = receiver
         , wrappers = wrappers
         }
 
@@ -369,33 +373,20 @@ startStartup wrappers receiver model =
 
         state =
             localStorageStates.startup
-    in
-    case state.state of
-        StartupState startupState ->
-            let
-                state2 =
-                    { state
-                        | state =
-                            StartupState
-                                { startupState
-                                    | model = Nothing
-                                    , meme = Nothing
-                                    , image = Nothing
-                                    , shownUrl = Nothing
-                                    , receiver = receiver
-                                }
-                    }
-            in
-            wrappers.setLocalStorageStates
-                (LocalStorageStates { localStorageStates | startup = state2 })
-                model
-                |> withCmd
-                    (Sequence.send state2 <|
-                        DbGet getShownImagePair
-                    )
 
-        _ ->
-            model |> withNoCmd
+        state2 =
+            { state
+                | state =
+                    makeStartupState wrappers receiver
+            }
+    in
+    wrappers.setLocalStorageStates
+        (LocalStorageStates { localStorageStates | startup = state2 })
+        model
+        |> withCmd
+            (Sequence.send state2 <|
+                DbGet getShownImagePair
+            )
 
 
 dbResponsePrefix : DbResponse -> String
@@ -522,8 +513,7 @@ startupDone wrappers receiver model =
                                         | startup =
                                             { state
                                                 | state =
-                                                    initialStartupState
-                                                        startupState.wrappers
+                                                    initialStartupState wrappers
                                             }
                                     }
                                 )
@@ -540,20 +530,24 @@ startupDone wrappers receiver model =
 
 initialPrepareImagesDialogState : Wrappers model msg -> StorageState model msg
 initialPrepareImagesDialogState wrappers =
+    makePrepareImagesDialogState wrappers (\_ _ model -> ( model, Cmd.none ))
+
+
+makePrepareImagesDialogState : Wrappers model msg -> (String -> String -> model -> ( model, Cmd msg )) -> StorageState model msg
+makePrepareImagesDialogState wrappers imageSizeGetter =
     PrepareImagesDialogState
         { hashes = []
         , thumbnails = Dict.empty
         , names = []
         , memeImage = Dict.empty
         , imageMemes = Dict.empty
-        , imageSizeGetter = \_ _ model -> ( model, Cmd.none )
-        , receiver = \_ _ model -> ( model, Cmd.none )
+        , imageSizeGetter = imageSizeGetter
         , wrappers = wrappers
         }
 
 
-startPrepareImages : Wrappers model msg -> (String -> String -> model -> ( model, Cmd msg )) -> (List Image -> Dict String (List Meme) -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
-startPrepareImages wrappers imageSizeGetter receiver model =
+startPrepareImages : Wrappers model msg -> (String -> String -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+startPrepareImages wrappers imageSizeGetter model =
     let
         pair =
             { prefix = pK.imageurls
@@ -565,25 +559,18 @@ startPrepareImages wrappers imageSizeGetter receiver model =
 
         state =
             localStorageStates.prepareImages
-    in
-    case state.state of
-        PrepareImagesDialogState prepareImagesState ->
-            let
-                state2 =
-                    { state
-                        | state =
-                            initialPrepareImagesDialogState
-                                prepareImagesState.wrappers
-                    }
-            in
-            ( wrappers.setLocalStorageStates
-                (LocalStorageStates { localStorageStates | getImage = state2 })
-                model
-            , Sequence.send state2 (DbListKeys pair)
-            )
 
-        _ ->
-            model |> withNoCmd
+        state2 =
+            { state
+                | state =
+                    makePrepareImagesDialogState wrappers imageSizeGetter
+            }
+    in
+    ( wrappers.setLocalStorageStates
+        (LocalStorageStates { localStorageStates | prepareImages = state2 })
+        model
+    , Sequence.send state2 (DbListKeys pair)
+    )
 
 
 prepareImagesStateProcess : DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
