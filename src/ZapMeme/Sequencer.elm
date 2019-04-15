@@ -17,6 +17,7 @@ module ZapMeme.Sequencer exposing
     , initialMeme
     , initialStorageStates
     , injectThumbnail
+    , removePrepareImagesImage
     , startGetImage
     , startGetMeme
     , startLoadData
@@ -798,23 +799,19 @@ prepareImagesStateProcess response storageState =
     case storageState of
         PrepareImagesDialogState state ->
             let
-                doneTriplet =
-                    ( True, state, DbNothing )
+                doneTuple =
+                    ( state, DbNothing )
 
-                nothingTriplet =
-                    ( False, state, DbNothing )
-
-                ( done, state2, request ) =
+                ( state2, request ) =
                     case response of
                         DbKeys { prefix } keys ->
                             if prefix == pK.imageurls then
                                 case keys of
                                     [] ->
-                                        doneTriplet
+                                        doneTuple
 
                                     key :: rest ->
-                                        ( False
-                                        , { state | hashes = rest }
+                                        ( { state | hashes = rest }
                                           -- Get the first thumbnail image
                                         , DbGet { key | prefix = pK.thumbnails }
                                         )
@@ -822,17 +819,16 @@ prepareImagesStateProcess response storageState =
                             else if prefix == pK.memes then
                                 case keys of
                                     [] ->
-                                        doneTriplet
+                                        doneTuple
 
                                     key :: rest ->
-                                        ( False
-                                        , { state | names = rest }
+                                        ( { state | names = rest }
                                         , DbGet key
                                         )
 
                             else
                                 -- Can't happen, but no way to proceed.
-                                doneTriplet
+                                doneTuple
 
                         DbGot { prefix, subkey } value ->
                             let
@@ -840,8 +836,7 @@ prepareImagesStateProcess response storageState =
                                     case st.hashes of
                                         [] ->
                                             -- Done getting thumbnails. Get memes.
-                                            ( False
-                                            , state
+                                            ( st
                                             , DbListKeys <| KeyPair pK.memes "."
                                             )
 
@@ -851,8 +846,7 @@ prepareImagesStateProcess response storageState =
                                                     { st | hashes = rest }
 
                                             else
-                                                ( False
-                                                , { state | hashes = rest }
+                                                ( { st | hashes = rest }
                                                 , DbGet
                                                     { pair
                                                         | prefix =
@@ -860,14 +854,13 @@ prepareImagesStateProcess response storageState =
                                                     }
                                                 )
 
-                                nextMeme () =
-                                    case state.names of
+                                nextMeme st =
+                                    case st.names of
                                         [] ->
-                                            doneTriplet
+                                            ( st, DbNothing )
 
                                         pair :: rest ->
-                                            ( False
-                                            , { state | names = rest }
+                                            ( { st | names = rest }
                                             , DbGet pair
                                             )
                             in
@@ -883,8 +876,7 @@ prepareImagesStateProcess response storageState =
 
                                     Just ( _, Nothing ) ->
                                         -- Thumbnail missing or corrupt, recreate it
-                                        ( False
-                                        , state
+                                        ( state
                                         , DbGet
                                             { prefix = pK.imageurls
                                             , subkey = subkey
@@ -893,11 +885,10 @@ prepareImagesStateProcess response storageState =
 
                                     Just ( _, Just url ) ->
                                         let
-                                            ( _, state3, req ) =
+                                            ( state3, req ) =
                                                 nextThumbnail state
                                         in
-                                        ( False
-                                        , { state3
+                                        ( { state3
                                             | thumbnails =
                                                 Dict.insert subkey
                                                     { url = url
@@ -925,8 +916,7 @@ prepareImagesStateProcess response storageState =
                                         -- Get image size,
                                         -- then make thumbnail,
                                         -- and continue.
-                                        ( False
-                                        , state
+                                        ( state
                                         , DbCustomRequest <|
                                             Task.perform
                                                 state.wrappers.sequenceDone
@@ -945,15 +935,15 @@ prepareImagesStateProcess response storageState =
                                 of
                                     Nothing ->
                                         -- Can't happen, response wasn't a DbGot
-                                        nextMeme ()
+                                        nextMeme state
 
                                     Just ( _, Nothing ) ->
-                                        nextMeme ()
+                                        nextMeme state
 
                                     Just ( _, Just meme ) ->
                                         let
-                                            ( done2, state3, req ) =
-                                                nextMeme ()
+                                            ( state3, req ) =
+                                                nextMeme state
 
                                             name =
                                                 subkey
@@ -969,8 +959,7 @@ prepareImagesStateProcess response storageState =
                                             names =
                                                 name :: existingNames
                                         in
-                                        ( done2
-                                        , { state3
+                                        ( { state3
                                             | memeImage =
                                                 Dict.insert name
                                                     hash
@@ -985,21 +974,13 @@ prepareImagesStateProcess response storageState =
 
                             else
                                 -- Can't happen, but no way to proceed.
-                                doneTriplet
+                                doneTuple
 
                         _ ->
                             -- Not DbKeys or DbGot. Ignore it.
-                            ( False, state, DbNothing )
+                            doneTuple
             in
-            if done then
-                -- There is no receiver for `PrepareImagesDialogState`.
-                -- The rendering code works directly from the state.
-                ( DbNothing
-                , PrepareImagesDialogState state2
-                )
-
-            else
-                ( request, PrepareImagesDialogState state2 )
+            ( request, PrepareImagesDialogState state2 )
 
         _ ->
             -- Not PrepareImagesDialogState, ignore it
@@ -1014,6 +995,33 @@ getPrepareImagesData (LocalStorageStates states) =
 
         _ ->
             ( Dict.empty, Dict.empty )
+
+
+removePrepareImagesImage : LocalStorageStates model msg -> String -> LocalStorageStates model msg
+removePrepareImagesImage (LocalStorageStates states) hash =
+    let
+        prepareImages =
+            states.prepareImages
+    in
+    case prepareImages.state of
+        PrepareImagesDialogState state ->
+            let
+                state2 =
+                    { state
+                        | thumbnails = Dict.remove hash state.thumbnails
+                        , imageMemes = Dict.remove hash state.imageMemes
+                    }
+            in
+            LocalStorageStates
+                { states
+                    | prepareImages =
+                        { prepareImages
+                            | state = PrepareImagesDialogState state2
+                        }
+                }
+
+        _ ->
+            LocalStorageStates states
 
 
 injectThumbnail : Wrappers model msg -> String -> String -> model -> ( model, Cmd msg )
