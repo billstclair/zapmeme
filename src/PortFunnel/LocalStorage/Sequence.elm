@@ -94,8 +94,11 @@ process response state =
 
     else
         let
+            dbResponse =
+                Debug.log "process" <| responseThunk ()
+
             ( request, state2 ) =
-                state.process (responseThunk ()) state.state
+                state.process dbResponse state.state
         in
         Just
             ( if state2 == state.state then
@@ -143,7 +146,7 @@ send : State state msg -> DbRequest msg -> Cmd msg
 send state request =
     case requestToMessage state.label request of
         Just req ->
-            state.sender req
+            state.sender <| Debug.log "send" req
 
         Nothing ->
             Cmd.none

@@ -13,6 +13,7 @@
 module ZapMeme.Sequencer exposing
     ( LocalStorageStates
     , Wrappers
+    , initialMeme
     , initialStorageStates
     , injectThumbnail
     , startGetImage
@@ -36,6 +37,7 @@ import CustomElement.ImageProperties as ImageProperties exposing (ImagePropertie
 import Dict exposing (Dict)
 import Json.Decode as JD exposing (Decoder)
 import Json.Encode as JE exposing (Value)
+import MD5
 import PortFunnel.LocalStorage as LocalStorage
 import PortFunnel.LocalStorage.Sequence as Sequence
     exposing
@@ -45,8 +47,17 @@ import PortFunnel.LocalStorage.Sequence as Sequence
         )
 import PortFunnels
 import Task
+import ZapMeme.Data exposing (data)
 import ZapMeme.EncodeDecode as ED
-import ZapMeme.Types exposing (Image, Meme, SavedModel)
+import ZapMeme.Types
+    exposing
+        ( Caption
+        , Image
+        , Meme
+        , SavedModel
+        , TextAlignment(..)
+        , TextPosition(..)
+        )
 
 
 {-| pK is short for persistenceKeys. I got tired of typing it.
@@ -92,7 +103,8 @@ type StorageState model msg
         , meme : Maybe Meme
         , image : Maybe Image
         , shownUrl : Maybe String
-        , receiver : SavedModel -> Meme -> Maybe String -> model -> ( model, Cmd msg )
+        , savedMemes : List String
+        , receiver : SavedModel -> Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )
         , wrappers : Wrappers model msg
         }
       -- There's no receiver here, because Main.imagesDialog
@@ -353,13 +365,14 @@ getImageDone receiver hash url model =
 
 initialStartupState : Wrappers model msg -> StorageState model msg
 initialStartupState wrappers =
-    makeStartupState wrappers (\_ _ _ model -> ( model, Cmd.none ))
+    makeStartupState wrappers (\_ _ _ _ model -> ( model, Cmd.none ))
 
 
-makeStartupState : Wrappers model msg -> (SavedModel -> Meme -> Maybe String -> model -> ( model, Cmd msg )) -> StorageState model msg
+makeStartupState : Wrappers model msg -> (SavedModel -> Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> StorageState model msg
 makeStartupState wrappers receiver =
     StartupState
         { model = Nothing
+        , savedMemes = []
         , meme = Nothing
         , image = Nothing
         , shownUrl = Nothing
@@ -368,14 +381,51 @@ makeStartupState wrappers receiver =
         }
 
 
-startStartup : Wrappers model msg -> (SavedModel -> Meme -> Maybe String -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+initialImage =
+    { url = data.pigeon
+    , hash = MD5.hex data.pigeon
+    }
+
+
+sampleCaptions : List Caption
+sampleCaptions =
+    [ { text = "I ask you<br>once again:"
+      , position = TopCenter
+      , alignment = Center
+      , font = "impact"
+      , fontsize = 10
+      , fontcolor = "white"
+      , outlineColor = Nothing
+      , bold = True
+      , width = 75
+      , height = 30
+      }
+    , { text = "Is this a pigeon?"
+      , position = BottomCenter
+      , alignment = Center
+      , font = "impact"
+      , fontsize = 10
+      , fontcolor = "white"
+      , outlineColor = Nothing
+      , bold = True
+      , width = 75
+      , height = 15
+      }
+    ]
+
+
+initialMeme : Meme
+initialMeme =
+    { image = initialImage
+    , captions = sampleCaptions
+    , width = 839
+    , height = 503
+    }
+
+
+startStartup : Wrappers model msg -> (SavedModel -> Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
 startStartup wrappers receiver model =
     let
-        getShownImagePair =
-            { prefix = pK.shownimageurl
-            , subkey = ""
-            }
-
         (LocalStorageStates localStorageStates) =
             wrappers.localStorageStates model
 
@@ -393,7 +443,7 @@ startStartup wrappers receiver model =
         model
         |> withCmd
             (Sequence.send state2 <|
-                DbGet getShownImagePair
+                DbListKeys (KeyPair pK.memes ".")
             )
 
 
@@ -401,6 +451,9 @@ dbResponsePrefix : DbResponse -> String
 dbResponsePrefix response =
     case response of
         DbGot { prefix } _ ->
+            prefix
+
+        DbKeys { prefix } _ ->
             prefix
 
         _ ->
@@ -413,11 +466,12 @@ startupStateProcess response storageState =
         nullReturn =
             ( DbNothing, storageState )
     in
-    case storageState of
+    case Debug.log "storageState" storageState of
         StartupState state ->
             let
                 prefix =
-                    dbResponsePrefix response
+                    Debug.log "prefix" <|
+                        dbResponsePrefix response
 
                 noPair =
                     KeyPair "" ""
@@ -426,7 +480,18 @@ startupStateProcess response storageState =
                     ( True, state, noPair )
 
                 ( done, state2, nextPair ) =
-                    if prefix == pK.shownimageurl then
+                    if prefix == pK.memes then
+                        case response of
+                            DbKeys _ keys ->
+                                ( False
+                                , { state | savedMemes = List.map .subkey keys }
+                                , KeyPair pK.shownimageurl ""
+                                )
+
+                            _ ->
+                                abortTriplet
+
+                    else if prefix == pK.shownimageurl then
                         case Sequence.decodeExpectedDbGot JD.string "" response of
                             Just ( _, Just url ) ->
                                 ( False
@@ -496,7 +561,7 @@ startupStateProcess response storageState =
             nullReturn
 
 
-startupDone : Wrappers model msg -> (SavedModel -> Meme -> Maybe String -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+startupDone : Wrappers model msg -> (SavedModel -> Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
 startupDone wrappers receiver model =
     let
         (LocalStorageStates states) =
@@ -510,9 +575,10 @@ startupDone wrappers receiver model =
             case
                 ( ( startupState.model, startupState.meme, startupState.image )
                 , startupState.shownUrl
+                , startupState.savedMemes
                 )
             of
-                ( ( Just savedModel, Just meme, Just image ), shownUrl ) ->
+                ( ( Just savedModel, Just meme, Just image ), shownUrl, savedMemes ) ->
                     let
                         mdl =
                             wrappers.setLocalStorageStates
@@ -527,7 +593,11 @@ startupDone wrappers receiver model =
                                 )
                                 model
                     in
-                    receiver savedModel { meme | image = image } shownUrl model
+                    receiver savedModel
+                        { meme | image = image }
+                        shownUrl
+                        savedMemes
+                        model
 
                 _ ->
                     model |> withNoCmd

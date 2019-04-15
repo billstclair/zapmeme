@@ -116,7 +116,7 @@ import Time exposing (Posix)
 import Url exposing (Url)
 import ZapMeme.Data exposing (data)
 import ZapMeme.EncodeDecode as ED
-import ZapMeme.Sequencer as Sequencer exposing (LocalStorageStates)
+import ZapMeme.Sequencer as Sequencer exposing (LocalStorageStates, initialMeme)
 import ZapMeme.Types
     exposing
         ( Caption
@@ -308,48 +308,6 @@ captionCoordinates caption totalWidth totalHeight =
 emptyImage =
     { url = ""
     , hash = ""
-    }
-
-
-initialImage =
-    { url = data.pigeon
-    , hash = MD5.hex data.pigeon
-    }
-
-
-sampleCaptions : List Caption
-sampleCaptions =
-    [ { text = "I ask you<br>once again:"
-      , position = TopCenter
-      , alignment = Center
-      , font = "impact"
-      , fontsize = 10
-      , fontcolor = "white"
-      , outlineColor = Nothing
-      , bold = True
-      , width = 75
-      , height = 30
-      }
-    , { text = "Is this a pigeon?"
-      , position = BottomCenter
-      , alignment = Center
-      , font = "impact"
-      , fontsize = 10
-      , fontcolor = "white"
-      , outlineColor = Nothing
-      , bold = True
-      , width = 75
-      , height = 15
-      }
-    ]
-
-
-initialMeme : Meme
-initialMeme =
-    { image = initialImage
-    , captions = sampleCaptions
-    , width = 839
-    , height = 503
     }
 
 
@@ -687,7 +645,8 @@ init flags url key =
                     ()
             , showMemeImage = False
             , showHelp = False
-            , localStorageStates = Sequencer.initialStorageStates sequencerWrappers
+            , localStorageStates =
+                Sequencer.initialStorageStates sequencerWrappers
             , windowSize = ( 2000, 2000 )
             , subscription = Nothing
             , fontDict = safeFontDict
@@ -713,13 +672,16 @@ init flags url key =
             , expectedStorageKeys = { memes = -1, images = -1 }
             , msg = Nothing
             }
+
+        ( WrappedModel mdl, cmd ) =
+            Sequencer.startStartup sequencerWrappers
+                startupDone
+                (WrappedModel model)
     in
-    model
+    mdl
         |> withCmds
             [ Task.perform getViewport Dom.getViewport
-            , get pK.meme
-            , get pK.model
-            , listKeys <| pK.memes ++ "."
+            , cmd
             ]
 
 
@@ -2143,7 +2105,7 @@ useInitialMeme model =
     ( { model | meme = initialMeme }
       -- To get the size
     , Task.perform ReceiveImageUrl <|
-        Task.succeed initialImage.url
+        Task.succeed initialMeme.image.url
     )
 
 
@@ -2244,7 +2206,23 @@ updateCaption updater model =
 
 funnelDict : FunnelDict Model Msg
 funnelDict =
-    PortFunnels.makeFunnelDict [ LocalStorageHandler storageHandler ] getCmdPort
+    PortFunnels.makeFunnelDict
+        [ LocalStorageHandler sequencerStorageHandler ]
+        getCmdPort
+
+
+wrappedStorageHandler : LocalStorage.Response -> PortFunnels.State -> WrappedModel -> ( WrappedModel, Cmd Msg )
+wrappedStorageHandler =
+    Sequencer.storageHandler sequencerWrappers
+
+
+sequencerStorageHandler : LocalStorage.Response -> PortFunnels.State -> Model -> ( Model, Cmd Msg )
+sequencerStorageHandler response state model =
+    let
+        ( WrappedModel mdl, cmd ) =
+            wrappedStorageHandler response state (WrappedModel model)
+    in
+    ( mdl, cmd )
 
 
 getCmdPort : String -> model -> (Value -> Cmd Msg)
@@ -2867,7 +2845,7 @@ renderInputs scale scalememe model =
         , p [ style "margin-top" "0" ]
             [ nbspd
                 [ b "Image:"
-                , button [ onClick <| ReceiveImageUrl initialImage.url ]
+                , button [ onClick <| ReceiveImageUrl initialMeme.image.url ]
                     [ text "Default" ]
                 , button [ onClick SelectImageFile ]
                     [ text "Choose" ]
@@ -4217,8 +4195,8 @@ getImageDone image model =
 
 {-| Result of Sequencer.startStartup
 -}
-startupDone : SavedModel -> Meme -> Maybe String -> Model -> ( Model, Cmd Msg )
-startupDone savedModel meme maybeShownUrl model =
+startupDone : SavedModel -> Meme -> Maybe String -> List String -> WrappedModel -> ( WrappedModel, Cmd Msg )
+startupDone savedModel meme maybeShownUrl savedMemes (WrappedModel model) =
     let
         mdl =
             savedModelToModel savedModel model
@@ -4230,11 +4208,13 @@ startupDone savedModel meme maybeShownUrl model =
             else
                 Nothing
     in
-    { mdl
-        | showMemeImage = shownUrl /= Nothing
-        , memeImageUrl = shownUrl
-        , meme = meme
-    }
+    WrappedModel
+        { mdl
+            | showMemeImage = shownUrl /= Nothing
+            , memeImageUrl = shownUrl
+            , meme = meme
+            , savedMemes = Set.fromList savedMemes
+        }
         |> withNoCmd
 
 
@@ -4296,3 +4276,22 @@ receiveThumbnailUrl url model =
                 (WrappedModel model)
     in
     ( mdl, cmd )
+
+
+{-| Result of `ZapMeme.Sequencer.startLoadData`.
+-}
+loadDataDone : List ( String, String ) -> List ( String, Meme ) -> WrappedModel -> ( WrappedModel, Cmd Msg )
+loadDataDone images memes (WrappedModel model) =
+    let
+        storageMirror =
+            { memes = memes
+            , images = images
+            }
+
+        storageText =
+            ED.encodeStorageMirror storageMirror
+                |> JE.encode 2
+    in
+    ( WrappedModel { model | storageText = storageText }
+    , Cmd.none
+    )
