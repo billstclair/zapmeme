@@ -906,7 +906,7 @@ update msg model =
         |> withCmds
             [ cmd
             , if doit then
-                putModel mdl
+                putModel (mdl.meme /= model.meme) mdl
 
               else
                 Cmd.none
@@ -1185,11 +1185,13 @@ updateInternal msg model =
 
             else
                 let
-                    flagKey =
-                        encodeSubkey pK.images hash
+                    ( WrappedModel mdl, cmd ) =
+                        Sequencer.startSaveImage sequencerWrappers hash url <|
+                            WrappedModel model
                 in
-                { model | receiveImagesHandler = Just <| receivePutImageImages url }
-                    |> withCmd (get flagKey)
+                -- I'm a trusting fellow, sometimes.
+                { mdl | knownImages = Set.insert hash mdl.knownImages }
+                    |> withCmd cmd
 
         ImageExists hash ->
             { model
@@ -4016,8 +4018,8 @@ listKeysLabeled label prefix =
         ()
 
 
-putModel : Model -> Cmd Msg
-putModel model =
+putModel : Bool -> Model -> Cmd Msg
+putModel saveMeme model =
     let
         savedModel =
             modelToSavedModel model
@@ -4027,7 +4029,11 @@ putModel model =
     in
     Cmd.batch
         [ put pK.model (Just value)
-        , putMeme model.meme
+        , if saveMeme then
+            putMeme model.meme
+
+          else
+            Cmd.none
         ]
 
 

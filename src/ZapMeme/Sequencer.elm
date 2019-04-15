@@ -272,26 +272,30 @@ startSaveImage wrappers hash url model =
 
 saveImageStateProcess : DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
 saveImageStateProcess response storageState =
-    let
-        nullReturn =
-            ( DbNothing, storageState )
-    in
     case storageState of
         SaveImageState { url, hash } ->
-            case Sequence.decodeExpectedDbGot JD.bool hash response of
-                Just ( _, Just True ) ->
-                    nullReturn
+            let
+                state2 =
+                    initialSaveImageState
+            in
+            case response of
+                DbGot pair value ->
+                    if value /= Nothing then
+                        ( DbNothing, state2 )
 
-                Just ( pair, _ ) ->
-                    ( DbPut pair <| JE.string url
-                    , storageState
-                    )
+                    else
+                        ( DbBatch
+                            [ DbPut (KeyPair pK.imageurls hash) <| JE.string url
+                            , DbPut pair <| JE.bool True
+                            ]
+                        , state2
+                        )
 
                 _ ->
-                    nullReturn
+                    ( DbNothing, state2 )
 
         _ ->
-            nullReturn
+            ( DbNothing, storageState )
 
 
 initialGetImageState : Wrappers model msg -> StorageState model msg
@@ -466,7 +470,7 @@ startupStateProcess response storageState =
         nullReturn =
             ( DbNothing, storageState )
     in
-    case Debug.log "storageState" storageState of
+    case storageState of
         StartupState state ->
             let
                 prefix =
