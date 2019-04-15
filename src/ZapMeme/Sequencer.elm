@@ -15,6 +15,12 @@ module ZapMeme.Sequencer exposing
     , Wrappers
     , initialStorageStates
     , injectThumbnail
+    , startGetImage
+    , startLoadData
+    , startPrepareImages
+    , startSaveImage
+    , startStartup
+    , storageHandler
     )
 
 {-
@@ -103,9 +109,9 @@ type StorageState model msg
     | LoadDataState
         { hashes : List KeyPair
         , names : List KeyPair
-        , images : List Image
-        , memes : List Meme
-        , receiver : List Image -> List Meme -> model -> ( model, Cmd msg )
+        , images : List ( String, String ) --(hash, url)
+        , memes : List ( String, Meme ) --(name, meme)
+        , receiver : List ( String, String ) -> List ( String, Meme ) -> model -> ( model, Cmd msg )
         , wrappers : Wrappers model msg
         }
 
@@ -624,7 +630,7 @@ prepareImagesStateProcess response storageState =
                                             -- Done getting thumbnails. Get memes.
                                             ( False
                                             , state
-                                            , DbGet <| KeyPair pK.memes "."
+                                            , DbListKeys <| KeyPair pK.memes "."
                                             )
 
                                         pair :: rest ->
@@ -645,10 +651,17 @@ prepareImagesStateProcess response storageState =
                                             )
                             in
                             if prefix == pK.thumbnails then
-                                case value of
+                                case
+                                    Sequence.decodeExpectedDbGot JD.string
+                                        ""
+                                        response
+                                of
                                     Nothing ->
-                                        -- No thumbnail, need to create it.
-                                        -- Start by loading the image URL
+                                        -- Can't happen, response wasn't a DbGot
+                                        nextThumbnail ()
+
+                                    Just ( _, Nothing ) ->
+                                        -- Thumbnail missing or corrupt, recreate it
                                         ( False
                                         , state
                                         , DbGet
@@ -657,103 +670,97 @@ prepareImagesStateProcess response storageState =
                                             }
                                         )
 
-                                    Just v ->
-                                        case JD.decodeValue JD.string v of
-                                            Err _ ->
-                                                -- Thumbnail corrupt, recreate it
-                                                ( False
-                                                , state
-                                                , DbGet
-                                                    { prefix = pK.imageurls
-                                                    , subkey = subkey
+                                    Just ( _, Just url ) ->
+                                        let
+                                            ( _, state3, req ) =
+                                                nextThumbnail ()
+                                        in
+                                        ( False
+                                        , { state3
+                                            | thumbnails =
+                                                Dict.insert subkey
+                                                    { url = url
+                                                    , hash = subkey
                                                     }
-                                                )
-
-                                            Ok url ->
-                                                let
-                                                    ( _, state3, req ) =
-                                                        nextThumbnail ()
-                                                in
-                                                ( False
-                                                , { state3
-                                                    | thumbnails =
-                                                        Dict.insert subkey
-                                                            { url = url
-                                                            , hash = subkey
-                                                            }
-                                                            state3.thumbnails
-                                                  }
-                                                , req
-                                                )
+                                                    state3.thumbnails
+                                          }
+                                        , req
+                                        )
 
                             else if prefix == pK.imageurls then
-                                case value of
+                                case
+                                    Sequence.decodeExpectedDbGot JD.string
+                                        ""
+                                        response
+                                of
                                     Nothing ->
+                                        -- Can't happen, response wasn't a DbGot
                                         nextThumbnail ()
 
-                                    Just v ->
-                                        case JD.decodeValue JD.string v of
-                                            Err _ ->
-                                                nextThumbnail ()
+                                    Just ( _, Nothing ) ->
+                                        nextThumbnail ()
 
-                                            Ok url ->
-                                                -- Get image size,
-                                                -- then make thumbnail,
-                                                -- and continue.
-                                                ( False
-                                                , state
-                                                , DbCustomRequest <|
-                                                    Task.perform
-                                                        state.wrappers.sequenceDone
-                                                        (Task.succeed <|
-                                                            state.imageSizeGetter
-                                                                subkey
-                                                                url
-                                                        )
+                                    Just ( _, Just url ) ->
+                                        -- Get image size,
+                                        -- then make thumbnail,
+                                        -- and continue.
+                                        ( False
+                                        , state
+                                        , DbCustomRequest <|
+                                            Task.perform
+                                                state.wrappers.sequenceDone
+                                                (Task.succeed <|
+                                                    state.imageSizeGetter
+                                                        subkey
+                                                        url
                                                 )
+                                        )
 
                             else if prefix == pK.meme then
-                                case value of
+                                case
+                                    Sequence.decodeExpectedDbGot ED.memeDecoder
+                                        ""
+                                        response
+                                of
                                     Nothing ->
+                                        -- Can't happen, response wasn't a DbGot
                                         nextMeme ()
 
-                                    Just v ->
-                                        case JD.decodeValue ED.memeDecoder v of
-                                            Err _ ->
+                                    Just ( _, Nothing ) ->
+                                        nextMeme ()
+
+                                    Just ( _, Just meme ) ->
+                                        let
+                                            ( done2, state3, req ) =
                                                 nextMeme ()
 
-                                            Ok meme ->
-                                                let
-                                                    ( done2, state3, req ) =
-                                                        nextMeme ()
+                                            name =
+                                                subkey
 
-                                                    name =
-                                                        subkey
+                                            hash =
+                                                meme.image.hash
 
-                                                    hash =
-                                                        meme.image.hash
+                                            existingNames =
+                                                Dict.get hash
+                                                    state.imageMemes
+                                                    |> Maybe.withDefault []
 
-                                                    existingNames =
-                                                        Dict.get hash
-                                                            state.imageMemes
-                                                            |> Maybe.withDefault []
-
-                                                    names =
-                                                        name :: existingNames
-                                                in
-                                                ( done2
-                                                , { state3
-                                                    | memeImage =
-                                                        Dict.insert name
-                                                            hash
-                                                            state.memeImage
-                                                    , imageMemes =
-                                                        Dict.insert hash
-                                                            names
-                                                            state.imageMemes
-                                                  }
-                                                , req
-                                                )
+                                            names =
+                                                name :: existingNames
+                                        in
+                                        ( done2
+                                        , { state3
+                                            | memeImage =
+                                                Dict.insert name
+                                                    hash
+                                                    state.memeImage
+                                            , imageMemes =
+                                                Dict.insert hash
+                                                    names
+                                                    state.imageMemes
+                                          }
+                                        , req
+                                        )
 
                             else
                                 -- Can't happen, but no way to proceed.
@@ -805,7 +812,7 @@ initialLoadDataState wrappers =
     makeLoadDataState wrappers (\_ _ model -> ( model, Cmd.none ))
 
 
-makeLoadDataState : Wrappers model msg -> (List Image -> List Meme -> model -> ( model, Cmd msg )) -> StorageState model msg
+makeLoadDataState : Wrappers model msg -> (List ( String, String ) -> List ( String, Meme ) -> model -> ( model, Cmd msg )) -> StorageState model msg
 makeLoadDataState wrappers receiver =
     LoadDataState
         { hashes = []
@@ -817,7 +824,7 @@ makeLoadDataState wrappers receiver =
         }
 
 
-startLoadData : Wrappers model msg -> (List Image -> List Meme -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+startLoadData : Wrappers model msg -> (List ( String, String ) -> List ( String, Meme ) -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
 startLoadData wrappers receiver model =
     let
         listImageurlsPair =
@@ -890,23 +897,23 @@ loadDataStateProcess response storageState =
                             if prefix == pK.imageurls then
                                 let
                                     state3 =
-                                        case value of
+                                        case
+                                            Sequence.decodeExpectedDbGot JD.string
+                                                ""
+                                                response
+                                        of
                                             Nothing ->
                                                 state
 
-                                            Just v ->
-                                                case JD.decodeValue JD.string v of
-                                                    Err _ ->
-                                                        state
+                                            Just ( _, Nothing ) ->
+                                                state
 
-                                                    Ok url ->
-                                                        { state
-                                                            | images =
-                                                                { hash = subkey
-                                                                , url = url
-                                                                }
-                                                                    :: state.images
-                                                        }
+                                            Just ( _, Just url ) ->
+                                                { state
+                                                    | images =
+                                                        ( subkey, url )
+                                                            :: state.images
+                                                }
 
                                     ( state4, req ) =
                                         case state3.hashes of
@@ -925,20 +932,24 @@ loadDataStateProcess response storageState =
                             else if prefix == pK.memes then
                                 let
                                     state3 =
-                                        case value of
+                                        case
+                                            Sequence.decodeExpectedDbGot
+                                                ED.memeDecoder
+                                                ""
+                                                response
+                                        of
                                             Nothing ->
                                                 state
 
-                                            Just v ->
-                                                case ED.decodeMeme v of
-                                                    Err _ ->
-                                                        state
+                                            Just ( _, Nothing ) ->
+                                                state
 
-                                                    Ok meme ->
-                                                        { state
-                                                            | memes =
-                                                                meme :: state.memes
-                                                        }
+                                            Just ( _, Just meme ) ->
+                                                { state
+                                                    | memes =
+                                                        ( subkey, meme )
+                                                            :: state.memes
+                                                }
                                 in
                                 case state3.names of
                                     [] ->
@@ -978,7 +989,7 @@ loadDataStateProcess response storageState =
             ( DbNothing, storageState )
 
 
-loadDataDone : Wrappers model msg -> (List Image -> List Meme -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+loadDataDone : Wrappers model msg -> (List ( String, String ) -> List ( String, Meme ) -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
 loadDataDone wrappers receiver model =
     let
         (LocalStorageStates states) =
