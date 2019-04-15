@@ -223,18 +223,22 @@ requestToMessage label request =
 
 encodePair : KeyPair -> String
 encodePair { prefix, subkey } =
-    let
-        suffix =
-            if subkey == "" then
-                ""
+    if prefix == "" then
+        subkey
 
-            else if subkey == "." then
-                "."
+    else
+        let
+            suffix =
+                if subkey == "" then
+                    ""
 
-            else
-                "." ++ subkey
-    in
-    prefix ++ suffix
+                else if subkey == "." then
+                    "."
+
+                else
+                    "." ++ subkey
+        in
+        prefix ++ suffix
 
 
 decodePair : String -> KeyPair
@@ -260,8 +264,8 @@ if received from the LocalStorage port code, in response to a `DbGet` or `DbList
 `NoResponse` is treated as `DbGot` with empty string components in its `KeyPair` and `Nothing` as its value. You will likely never want to do that.
 
 -}
-dbResponseToValue : String -> DbResponse -> Value
-dbResponseToValue label response =
+dbResponseToValue : String -> String -> DbResponse -> Value
+dbResponseToValue prefix label response =
     let
         wrap tag args =
             { moduleName = LocalStorage.moduleName
@@ -269,13 +273,16 @@ dbResponseToValue label response =
             , args = args
             }
                 |> PortFunnel.encodeGenericMessage
+
+        prefixed key =
+            encodePair <| KeyPair prefix key
     in
     case response of
         DbGot pair value ->
             wrap "got" <|
-                JE.object
+                JE.object <|
                     [ ( "label", JE.string label )
-                    , ( "key", JE.string <| encodePair pair )
+                    , ( "key", JE.string (prefixed <| encodePair pair) )
                     , ( "value"
                       , case value of
                             Nothing ->
@@ -290,7 +297,7 @@ dbResponseToValue label response =
             wrap "keys" <|
                 JE.object
                     [ ( "label", JE.string label )
-                    , ( "prefix", JE.string <| encodePair pair )
+                    , ( "prefix", JE.string (prefixed <| encodePair pair) )
                     , ( "keys"
                       , List.map encodePair keys
                             |> JE.list JE.string
@@ -298,7 +305,7 @@ dbResponseToValue label response =
                     ]
 
         DbNoResponse ->
-            dbResponseToValue label <| DbGot (KeyPair "" "") Nothing
+            dbResponseToValue prefix label <| DbGot (KeyPair "" "") Nothing
 
 
 {-| If you receive something outside of a LocalStorage return,
@@ -310,10 +317,16 @@ It returns a `Task` that, if you send it with your LocalStorage `sub` port messa
 It's a trivial task wrapper on the result of dbResponseToValue, using `label` property of the `State`.
 
 -}
-injectTask : State state msg -> DbResponse -> Task Never Value
-injectTask state response =
-    dbResponseToValue state.label response
+injectTask : Injector msg -> State state msg -> DbResponse -> Task Never Value
+injectTask injector state response =
+    dbResponseToValue injector.prefix state.label response
         |> Task.succeed
+
+
+type alias Injector msg =
+    { prefix : String
+    , tagger : Value -> msg
+    }
 
 
 {-| Call `injectTask`, and use `Task.perform` to turn that `Task` into a `Cmd`.
@@ -321,7 +334,7 @@ injectTask state response =
 The `(Value -> msg)` function will usually be the `Msg` that receives subscription input from your LocalStorage port.
 
 -}
-inject : (Value -> msg) -> State state msg -> DbResponse -> Cmd msg
-inject wrapper state response =
-    injectTask state response
-        |> Task.perform wrapper
+inject : Injector msg -> State state msg -> DbResponse -> Cmd msg
+inject injector state response =
+    injectTask injector state response
+        |> Task.perform injector.tagger

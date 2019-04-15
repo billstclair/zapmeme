@@ -13,6 +13,7 @@
 module ZapMeme.Sequencer exposing
     ( LocalStorageStates
     , Wrappers
+    , getPrepareImagesData
     , initialMeme
     , initialStorageStates
     , injectThumbnail
@@ -140,7 +141,7 @@ type StorageState model msg
 -}
 type alias Wrappers model msg =
     { sender : LocalStorage.Message -> Cmd msg
-    , injector : Value -> msg
+    , injector : { prefix : String, tagger : Value -> msg }
     , localStorageStates : model -> LocalStorageStates model msg
     , setLocalStorageStates : LocalStorageStates model msg -> model -> model
     , sequenceDone : (model -> ( model, Cmd msg )) -> msg
@@ -427,6 +428,11 @@ startGetMeme wrappers receiver name model =
     )
 
 
+nohash : String
+nohash =
+    "nohash"
+
+
 getMemeStateProcess : DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
 getMemeStateProcess response storageState =
     let
@@ -464,7 +470,7 @@ getMemeStateProcess response storageState =
                                             { image | url = url }
 
                                         Nothing ->
-                                            { url = "", hash = "nohash" }
+                                            { url = "", hash = nohash }
 
                                 filledMeme =
                                     { gotMeme
@@ -672,7 +678,7 @@ startupStateProcess response storageState =
                                 , { state
                                     | image =
                                         Just
-                                            { url = "", hash = "nohash" }
+                                            { url = "", hash = nohash }
                                   }
                                 , noPair
                                 )
@@ -830,8 +836,8 @@ prepareImagesStateProcess response storageState =
 
                         DbGot { prefix, subkey } value ->
                             let
-                                nextThumbnail () =
-                                    case state.hashes of
+                                nextThumbnail st =
+                                    case st.hashes of
                                         [] ->
                                             -- Done getting thumbnails. Get memes.
                                             ( False
@@ -840,10 +846,19 @@ prepareImagesStateProcess response storageState =
                                             )
 
                                         pair :: rest ->
-                                            ( False
-                                            , { state | hashes = rest }
-                                            , DbGet pair
-                                            )
+                                            if pair.subkey == nohash then
+                                                nextThumbnail
+                                                    { st | hashes = rest }
+
+                                            else
+                                                ( False
+                                                , { state | hashes = rest }
+                                                , DbGet
+                                                    { pair
+                                                        | prefix =
+                                                            pK.thumbnails
+                                                    }
+                                                )
 
                                 nextMeme () =
                                     case state.names of
@@ -864,7 +879,7 @@ prepareImagesStateProcess response storageState =
                                 of
                                     Nothing ->
                                         -- Can't happen, response wasn't a DbGot
-                                        nextThumbnail ()
+                                        nextThumbnail state
 
                                     Just ( _, Nothing ) ->
                                         -- Thumbnail missing or corrupt, recreate it
@@ -879,7 +894,7 @@ prepareImagesStateProcess response storageState =
                                     Just ( _, Just url ) ->
                                         let
                                             ( _, state3, req ) =
-                                                nextThumbnail ()
+                                                nextThumbnail state
                                         in
                                         ( False
                                         , { state3
@@ -901,10 +916,10 @@ prepareImagesStateProcess response storageState =
                                 of
                                     Nothing ->
                                         -- Can't happen, response wasn't a DbGot
-                                        nextThumbnail ()
+                                        nextThumbnail state
 
                                     Just ( _, Nothing ) ->
-                                        nextThumbnail ()
+                                        nextThumbnail state
 
                                     Just ( _, Just url ) ->
                                         -- Get image size,
@@ -922,7 +937,7 @@ prepareImagesStateProcess response storageState =
                                                 )
                                         )
 
-                            else if prefix == pK.meme then
+                            else if prefix == pK.memes then
                                 case
                                     Sequence.decodeExpectedDbGot ED.memeDecoder
                                         ""
@@ -989,6 +1004,16 @@ prepareImagesStateProcess response storageState =
         _ ->
             -- Not PrepareImagesDialogState, ignore it
             ( DbNothing, storageState )
+
+
+getPrepareImagesData : LocalStorageStates model msg -> ( Dict String Image, Dict String (List String) )
+getPrepareImagesData (LocalStorageStates states) =
+    case states.prepareImages.state of
+        PrepareImagesDialogState state ->
+            ( state.thumbnails, state.imageMemes )
+
+        _ ->
+            ( Dict.empty, Dict.empty )
 
 
 injectThumbnail : Wrappers model msg -> String -> String -> model -> ( model, Cmd msg )

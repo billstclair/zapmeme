@@ -534,17 +534,8 @@ type Msg
     | CloseDataDialog
     | StartDownload String String
     | MaybePutImageUrl String String
-    | ImageExists String
-    | PutImageUrl String String
     | ReceiveImageKey String (Maybe Value)
-    | ReceiveMeme (Maybe Value)
-    | ReceiveImage String (Maybe Value)
-    | ReceiveModel (Maybe Value)
-    | ReceiveMemeKeys (List String)
     | ReceiveImageUrls (List String)
-    | ReceiveMemeImageHash String (Maybe Value)
-    | ReceiveThumbnail String (Maybe Value)
-    | ReceiveImageForThumbnail String (Maybe Value)
     | ReceiveThumbnailProperties ImageProperties
     | GetThumbnailUrl ()
     | ReceiveThumbnailUrl String
@@ -890,12 +881,6 @@ update msg model =
                                 MaybePutImageUrl _ _ ->
                                     False
 
-                                PutImageUrl _ _ ->
-                                    False
-
-                                ImageExists _ ->
-                                    False
-
                                 _ ->
                                     (modelToSavedModel mdl /= modelToSavedModel model)
                                         || (mdl.meme /= model.meme)
@@ -1201,33 +1186,6 @@ updateInternal msg model =
                 { mdl | knownImages = Set.insert hash mdl.knownImages }
                     |> withCmd cmd
 
-        ImageExists hash ->
-            { model
-                | knownImages = Set.insert hash model.knownImages
-            }
-                |> withNoCmd
-
-        PutImageUrl hash url ->
-            let
-                flagKey =
-                    encodeSubkey pK.images hash
-
-                key =
-                    encodeSubkey pK.imageurls hash
-            in
-            -- I don't know where this comes from yet, but we don't want to save it.
-            if hash == "" then
-                model |> withNoCmd
-
-            else
-                { model
-                    | knownImages = Set.insert hash model.knownImages
-                }
-                    |> withCmds
-                        [ put flagKey (Just <| JE.bool True)
-                        , put key (Just <| JE.string url)
-                        ]
-
         ReceiveImageKey hash value ->
             case model.receiveImagesHandler of
                 Nothing ->
@@ -1237,98 +1195,6 @@ updateInternal msg model =
                     ( { model | receiveImagesHandler = Nothing }
                     , handler hash value
                     )
-
-        ReceiveMeme value ->
-            let
-                mdl =
-                    { model | dialog = NoDialog }
-            in
-            case value of
-                Nothing ->
-                    useInitialMeme mdl
-
-                Just v ->
-                    case ED.decodeMeme v of
-                        Err _ ->
-                            useInitialMeme mdl
-
-                        Ok meme ->
-                            ( { mdl | receivedMeme = Just meme }
-                            , get
-                                (encodeSubkey pK.imageurls
-                                    meme.image.hash
-                                )
-                            )
-
-        ReceiveImage hash value ->
-            let
-                mdl1 =
-                    { model
-                        | receivedMeme = Nothing
-                        , receivedModel = Nothing
-                    }
-
-                mdl =
-                    case model.receivedModel of
-                        Nothing ->
-                            mdl1
-
-                        Just savedModel ->
-                            savedModelToModel savedModel mdl1
-            in
-            case value of
-                Nothing ->
-                    useInitialMeme mdl
-
-                Just v ->
-                    case model.receivedMeme of
-                        Nothing ->
-                            useInitialMeme mdl
-
-                        Just meme ->
-                            case JD.decodeValue JD.string v of
-                                Err _ ->
-                                    mdl |> withNoCmd
-
-                                Ok url ->
-                                    { mdl
-                                        | meme =
-                                            { meme
-                                                | image =
-                                                    { url = url
-                                                    , hash = hash
-                                                    }
-                                            }
-                                    }
-                                        |> withCmd
-                                            (if not mdl.showMemeImage then
-                                                Cmd.none
-
-                                             else
-                                                get pK.shownimageurl
-                                            )
-
-        ReceiveModel value ->
-            case value of
-                Nothing ->
-                    model |> withNoCmd
-
-                Just v ->
-                    case ED.decodeSavedModel v of
-                        Err _ ->
-                            model |> withNoCmd
-
-                        Ok savedModel ->
-                            { model | receivedModel = Just savedModel }
-                                |> (if savedModel.dialog == ImagesDialog then
-                                        setImagesDialog
-
-                                    else
-                                        withNoCmd
-                                   )
-
-        ReceiveMemeKeys keys ->
-            receiveMemeKeys keys model
 
         ReceiveImageUrls keys ->
             let
@@ -1342,99 +1208,8 @@ updateInternal msg model =
             }
                 |> loadThumbnails
 
-        ReceiveMemeImageHash name value ->
-            case value of
-                Nothing ->
-                    loadNextMemeImage model
-
-                Just v ->
-                    case ED.decodeMeme v of
-                        Err _ ->
-                            loadNextMemeImage model
-
-                        Ok meme ->
-                            let
-                                hash =
-                                    meme.image.hash
-
-                                names =
-                                    Dict.get hash model.imageMemes
-                                        |> Maybe.withDefault []
-                            in
-                            { model
-                                | memeImages =
-                                    Dict.insert name hash model.memeImages
-                                , imageMemes =
-                                    Dict.insert hash
-                                        (adjoin name names)
-                                        model.imageMemes
-                            }
-                                |> loadNextMemeImage
-
-        ReceiveThumbnail hash value ->
-            case value of
-                Just v ->
-                    case JD.decodeValue JD.string v of
-                        Err _ ->
-                            loadNextThumbnail model
-
-                        Ok url ->
-                            let
-                                image =
-                                    { url = url, hash = hash }
-                            in
-                            { model
-                                | thumbnails =
-                                    Dict.insert hash image model.thumbnails
-                            }
-                                |> loadNextThumbnail
-
-                Nothing ->
-                    -- No thumbnail exists, need to create one
-                    -- Start by loading the image URL.
-                    -- Will continue at ReceiveImageForThumbnail
-                    ( model
-                    , getLabeled labels.imageForThumbnail
-                        (encodeSubkey pK.imageurls hash)
-                    )
-
-        ReceiveImageForThumbnail hash value ->
-            case value of
-                Nothing ->
-                    loadNextThumbnail model
-
-                Just v ->
-                    case JD.decodeValue JD.string v of
-                        Err _ ->
-                            loadNextThumbnail model
-
-                        -- I don't know how this happens, but it does.
-                        Ok "" ->
-                            loadNextThumbnail model
-
-                        Ok url ->
-                            -- Got the image. Need to compute its size
-                            -- Will continue at ReceiveThumbnailProperties
-                            { model
-                                | thumbnailImageUrl = url
-                                , thumbnailImageHash = hash
-                                , thumbnailImageSize =
-                                    ( thumbnailImageWidth, thumbnailImageHeight )
-                                , triggerThumbnailProperties =
-                                    model.triggerThumbnailProperties + 1
-                            }
-                                |> withNoCmd
-
         ReceiveThumbnailProperties properties ->
-            let
-                w =
-                    properties.width * thumbnailScaledHeight // properties.height
-            in
-            { model
-                | thumbnailImageSize = ( w, thumbnailScaledHeight )
-            }
-                -- Need to delay to let the Svg draw
-                |> withCmd (Task.perform GetThumbnailUrl <| Task.succeed ())
+            receiveThumbnailProperties properties model
 
         GetThumbnailUrl _ ->
             { model
@@ -1444,18 +1219,7 @@ updateInternal msg model =
                 |> withNoCmd
 
         ReceiveThumbnailUrl url ->
-            let
-                hash =
-                    model.thumbnailImageHash
-
-                image =
-                    { url = url, hash = hash }
-
-                ( mdl, cmd ) =
-                    { model | thumbnails = Dict.insert hash image model.thumbnails }
-                        |> loadNextThumbnail
-            in
-            mdl |> withCmds [ cmd, putThumbnail hash url ]
+            receiveThumbnailUrl url model
 
         GetImageFromDialog hash ->
             { model | showMemeImage = False }
@@ -2039,14 +1803,13 @@ modifyExpectedStorageKeys memeInc imageInc model =
 setImagesDialog : Model -> ( Model, Cmd Msg )
 setImagesDialog model =
     let
-        ( mdl, cmd ) =
-            { model
-                | dialog = ImagesDialog
-                , loadedImages = []
-            }
-                |> listMemes
+        ( WrappedModel mdl, cmd ) =
+            Sequencer.startPrepareImages sequencerWrappers
+                getImageDialogImageSize
+                (WrappedModel model)
     in
-    mdl |> withCmds [ cmd, listImages ]
+    { mdl | dialog = ImagesDialog }
+        |> withCmds [ cmd, listImages ]
 
 
 loadThumbnails : Model -> ( Model, Cmd Msg )
@@ -2074,49 +1837,6 @@ adjoin a list =
 
     else
         a :: list
-
-
-loadNextMemeImage : Model -> ( Model, Cmd Msg )
-loadNextMemeImage model =
-    case model.neededMemes of
-        [] ->
-            model |> withNoCmd
-
-        name :: tail ->
-            { model | neededMemes = tail }
-                |> withCmd (getMemeImage name)
-
-
-loadNextThumbnail : Model -> ( Model, Cmd Msg )
-loadNextThumbnail model =
-    case model.neededThumbnails of
-        [] ->
-            { model | thumbnailImageUrl = "" } |> withNoCmd
-
-        hash :: tail ->
-            { model | neededThumbnails = tail }
-                |> withCmd (getThumbnail hash)
-
-
-receiveMemeKeys : List String -> Model -> ( Model, Cmd Msg )
-receiveMemeKeys keys model =
-    let
-        savedMemes =
-            List.map decodeSubkey keys
-                |> List.map Tuple.second
-                |> List.foldr Set.insert model.savedMemes
-    in
-    { model | savedMemes = savedMemes }
-        |> withNoCmd
-
-
-useInitialMeme : Model -> ( Model, Cmd Msg )
-useInitialMeme model =
-    ( { model | meme = initialMeme }
-      -- To get the size
-    , Task.perform ReceiveImageUrl <|
-        Task.succeed initialMeme.image.url
-    )
 
 
 buttonOperate : Bool -> ButtonOperation -> Model -> Model
@@ -2238,98 +1958,6 @@ localStorageSend message model =
     LocalStorage.send (getCmdPort LocalStorage.moduleName model)
         message
         funnelState.storage
-
-
-storageHandler : LocalStorage.Response -> PortFunnels.State -> Model -> ( Model, Cmd Msg )
-storageHandler response state model =
-    case Debug.log "storageHandler" response of
-        LocalStorage.GetResponse { label, key, value } ->
-            let
-                ( pkey, subkey ) =
-                    decodeSubkey key
-            in
-            if pkey == pK.images then
-                -- images exists flag, indexed as "images.<hash>"
-                ( model
-                , Task.perform (ReceiveImageKey subkey) (Task.succeed value)
-                )
-
-            else if pkey == pK.meme then
-                -- current Meme, indexed as "meme>"
-                ( model
-                , Task.perform ReceiveMeme (Task.succeed value)
-                )
-
-            else if pkey == pK.model then
-                -- SavedModel, indexed as "model"
-                ( model
-                , Task.perform ReceiveModel (Task.succeed value)
-                )
-
-            else if pkey == pK.imageurls then
-                -- "data:..." URL for image, indexes as "imageurls.<hash>"
-                let
-                    msg =
-                        if Just labels.imageForThumbnail == label then
-                            ReceiveImageForThumbnail subkey
-
-                        else if Just labels.imageFromDialog == label then
-                            ReceiveImageFromDialog subkey
-
-                        else if Just labels.storageImage == label then
-                            ReceiveStorageImage subkey
-
-                        else
-                            ReceiveImage subkey
-                in
-                model
-                    |> withCmd (Task.perform msg <| Task.succeed value)
-
-            else if pkey == pK.memes then
-                -- Meme, indexed as "memes.<saved name>"
-                let
-                    msg =
-                        if Just labels.memeImage == label then
-                            ReceiveMemeImageHash subkey
-
-                        else if Just labels.storageMeme == label then
-                            ReceiveStorageMeme subkey
-
-                        else
-                            ReceiveMeme
-                in
-                model
-                    |> withCmd (Task.perform msg <| Task.succeed value)
-
-            else if pkey == pK.thumbnails then
-                -- "data:..." URL, indexed as "thumbnails.<hash>"
-                ( model
-                , Task.perform (ReceiveThumbnail subkey) (Task.succeed value)
-                )
-
-            else
-                model |> withNoCmd
-
-        LocalStorage.ListKeysResponse { label, keys } ->
-            ( model
-            , Task.succeed keys
-                |> Task.perform
-                    (if label == Just labels.listImageUrls then
-                        ReceiveImageUrls
-
-                     else if label == Just labels.listStorageMemes then
-                        ReceiveStorageMemeKeys
-
-                     else if label == Just labels.listStorageImages then
-                        ReceiveStorageImageKeys
-
-                     else
-                        ReceiveMemeKeys
-                    )
-            )
-
-        _ ->
-            model |> withNoCmd
 
 
 br : Html msg
@@ -3673,15 +3301,18 @@ savedMemeRow name =
 imagesDialog : Model -> Config Msg
 imagesDialog model =
     let
+        ( thumbnails, imageMemes ) =
+            Sequencer.getPrepareImagesData model.localStorageStates
+
         imageList =
-            Dict.toList model.thumbnails
+            Dict.toList thumbnails
                 |> List.map Tuple.second
 
         showAllImages =
             model.inputs.showAllImages
 
         rows =
-            List.map (savedImageRow model) imageList
+            List.map (savedImageRow model imageMemes) imageList
                 |> List.sortBy Tuple.first
                 |> List.filter
                     (if showAllImages then
@@ -3723,11 +3354,11 @@ imagesDialog model =
     }
 
 
-savedImageRow : Model -> Image -> ( List String, Html Msg )
-savedImageRow model image =
+savedImageRow : Model -> Dict String (List String) -> Image -> ( List String, Html Msg )
+savedImageRow model imageMemes image =
     let
         names =
-            Dict.get image.hash model.imageMemes
+            Dict.get image.hash imageMemes
                 |> Maybe.withDefault []
                 |> List.sort
     in
@@ -4092,26 +3723,6 @@ getMemeImage name =
     getLabeled labels.memeImage key
 
 
-listMemes : Model -> ( Model, Cmd Msg )
-listMemes model =
-    let
-        loadedMemes =
-            Dict.toList model.memeImages
-                |> List.map Tuple.first
-                |> Set.fromList
-
-        neededMemes =
-            Set.diff model.savedMemes loadedMemes
-    in
-    case Set.toList neededMemes of
-        [] ->
-            model |> withNoCmd
-
-        names ->
-            { model | neededMemes = names }
-                |> loadNextMemeImage
-
-
 listImages : Cmd Msg
 listImages =
     listKeysLabeled labels.listImageUrls
@@ -4172,7 +3783,7 @@ pK =
 sequencerWrappers : Sequencer.Wrappers WrappedModel Msg
 sequencerWrappers =
     { sender = \message -> localStorageSend message ()
-    , injector = ProcessLocalStorage
+    , injector = { prefix = localStoragePrefix, tagger = ProcessLocalStorage }
     , localStorageStates =
         \(WrappedModel model) -> model.localStorageStates
     , setLocalStorageStates =
@@ -4239,7 +3850,13 @@ startupDone savedModel meme maybeShownUrl savedMemes (WrappedModel model) =
             , meme = meme
             , savedMemes = Set.fromList savedMemes
         }
-        |> withNoCmd
+        |> withCmd
+            (if mdl.dialog == ImagesDialog then
+                Task.perform (\_ -> SetImagesDialog) <| Task.succeed ()
+
+             else
+                Cmd.none
+            )
 
 
 
@@ -4256,16 +3873,17 @@ thumbnailImageHeight =
     100
 
 
-getImageDialogImageSize : String -> String -> Model -> ( Model, Cmd Msg )
-getImageDialogImageSize hash url model =
-    { model
-        | thumbnailImageUrl = url
-        , thumbnailImageHash = hash
-        , thumbnailImageSize =
-            ( thumbnailImageWidth, thumbnailImageHeight )
-        , triggerThumbnailProperties =
-            model.triggerThumbnailProperties + 1
-    }
+getImageDialogImageSize : String -> String -> WrappedModel -> ( WrappedModel, Cmd Msg )
+getImageDialogImageSize hash url (WrappedModel model) =
+    WrappedModel
+        { model
+            | thumbnailImageUrl = url
+            , thumbnailImageHash = hash
+            , thumbnailImageSize =
+                ( thumbnailImageWidth, thumbnailImageHeight )
+            , triggerThumbnailProperties =
+                model.triggerThumbnailProperties + 1
+        }
         |> withNoCmd
 
 
@@ -4299,7 +3917,8 @@ receiveThumbnailUrl url model =
                 model.thumbnailImageHash
                 (WrappedModel model)
     in
-    ( mdl, cmd )
+    { mdl | thumbnailImageUrl = "" }
+        |> withCmd cmd
 
 
 {-| Result of `ZapMeme.Sequencer.startLoadData`.
