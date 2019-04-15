@@ -3230,9 +3230,19 @@ savedMemeRow name =
 imagesDialog : Model -> Config Msg
 imagesDialog model =
     let
-        ( thumbnails, imageMemes ) =
+        ( thumbnails, imageMemesDict ) =
             Sequencer.getPrepareImagesData model.localStorageStates
 
+        imageMemes : Dict String (List String)
+        imageMemes =
+            Dict.foldl
+                (\hash memes dict ->
+                    Dict.insert hash (List.sort memes) dict
+                )
+                Dict.empty
+                imageMemesDict
+
+        imageList : List Image
         imageList =
             Dict.toList thumbnails
                 |> List.map Tuple.second
@@ -3240,9 +3250,31 @@ imagesDialog model =
         showAllImages =
             model.inputs.showAllImages
 
+        sorter : Image -> Image -> Order
+        sorter x y =
+            case
+                ( Dict.get x.hash imageMemes
+                    |> Maybe.withDefault []
+                , Dict.get y.hash imageMemes
+                    |> Maybe.withDefault []
+                )
+            of
+                ( a1 :: b1, [] ) ->
+                    LT
+
+                ( [], a2 :: b2 ) ->
+                    GT
+
+                ( [], [] ) ->
+                    compare x.hash y.hash
+
+                ( xmemes, ymemes ) ->
+                    compare xmemes ymemes
+
         rows =
-            List.map (savedImageRow model imageMemes) imageList
-                |> List.sortBy Tuple.first
+            imageList
+                |> List.sortWith sorter
+                |> List.map (savedImageRow model imageMemes)
                 |> List.filter
                     (if showAllImages then
                         \_ -> True
