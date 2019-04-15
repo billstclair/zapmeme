@@ -1001,12 +1001,19 @@ updateInternal msg model =
                 |> withCmd (putSavedMeme inputs.savedMemeName (Just model.meme))
 
         LoadSavedMeme name ->
-            { model
+            let
+                ( WrappedModel mdl, cmd ) =
+                    Sequencer.startGetMeme sequencerWrappers
+                        getMemeDone
+                        name
+                        (WrappedModel model)
+            in
+            { mdl
                 | savedMemes = Set.insert name model.savedMemes
                 , showMemeImage = False
                 , inputs = { inputs | savedMemeName = name }
             }
-                |> withCmd (getSavedMeme name)
+                |> withCmd cmd
 
         DeleteSavedMeme name ->
             let
@@ -1180,7 +1187,8 @@ updateInternal msg model =
                 |> withCmd (Task.perform (\_ -> GetReturnedFile) Time.now)
 
         MaybePutImageUrl hash url ->
-            if Set.member hash model.knownImages then
+            if False then
+                --Set.member hash model.knownImages then
                 model |> withNoCmd
 
             else
@@ -2109,15 +2117,6 @@ useInitialMeme model =
     , Task.perform ReceiveImageUrl <|
         Task.succeed initialMeme.image.url
     )
-
-
-receivePutImageImages : String -> String -> Maybe Value -> Cmd Msg
-receivePutImageImages url hash value =
-    if value == Nothing then
-        Task.perform (PutImageUrl hash) <| Task.succeed url
-
-    else
-        Task.perform ImageExists <| Task.succeed hash
 
 
 buttonOperate : Bool -> ButtonOperation -> Model -> Model
@@ -4183,19 +4182,38 @@ sequencerWrappers =
     }
 
 
+{-| Result of Sequencer.startGetMeme
+-}
+getMemeDone : String -> Meme -> WrappedModel -> ( WrappedModel, Cmd Msg )
+getMemeDone name meme (WrappedModel model) =
+    let
+        mdl =
+            WrappedModel
+                { model
+                    | meme = meme
+                    , dialog = NoDialog
+                }
+    in
+    Sequencer.startGetImage sequencerWrappers
+        getImageDone
+        meme.image.hash
+        mdl
+
+
 {-| Result of Sequencer.startGetImage
 -}
-getImageDone : Image -> Model -> ( Model, Cmd Msg )
-getImageDone image model =
+getImageDone : Image -> WrappedModel -> ( WrappedModel, Cmd Msg )
+getImageDone image (WrappedModel model) =
     let
         meme =
             model.meme
     in
-    { model
-        | showMemeImage = False
-        , meme = { meme | image = image }
-        , triggerImageProperties = model.triggerImageProperties + 1
-    }
+    WrappedModel
+        { model
+            | showMemeImage = False
+            , meme = { meme | image = image }
+            , triggerImageProperties = model.triggerImageProperties + 1
+        }
         |> withNoCmd
 
 

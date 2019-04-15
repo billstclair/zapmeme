@@ -17,6 +17,7 @@ module ZapMeme.Sequencer exposing
     , initialStorageStates
     , injectThumbnail
     , startGetImage
+    , startGetMeme
     , startLoadData
     , startPrepareImages
     , startSaveImage
@@ -80,6 +81,7 @@ labels =
     { -- Simple
       saveImage = "saveImage"
     , getImage = "getImage"
+    , getMeme = "getMeme"
 
     -- Complex
     , startup = "startup"
@@ -96,6 +98,12 @@ type StorageState model msg
     | GetImageState
         { hash : String
         , receiver : Image -> model -> ( model, Cmd msg )
+        , wrappers : Wrappers model msg
+        }
+    | GetMemeState
+        { name : String
+        , meme : Maybe Meme
+        , receiver : String -> Meme -> model -> ( model, Cmd msg )
         , wrappers : Wrappers model msg
         }
     | StartupState
@@ -144,6 +152,7 @@ type LocalStorageStates model msg
         { wrappers : Wrappers model msg
         , saveImage : Sequence.State (StorageState model msg) msg
         , getImage : Sequence.State (StorageState model msg) msg
+        , getMeme : Sequence.State (StorageState model msg) msg
         , startup : Sequence.State (StorageState model msg) msg
         , prepareImages : Sequence.State (StorageState model msg) msg
         , loadData : Sequence.State (StorageState model msg) msg
@@ -164,6 +173,12 @@ initialStorageStates wrappers =
             { state = initialGetImageState wrappers
             , label = labels.getImage
             , process = getImageStateProcess
+            , sender = wrappers.sender
+            }
+        , getMeme =
+            { state = initialGetMemeState wrappers
+            , label = labels.getMeme
+            , process = getMemeStateProcess
             , sender = wrappers.sender
             }
         , startup =
@@ -211,6 +226,9 @@ storageHandler wrappers response state model =
               )
             , ( states.getImage
               , \res -> { states | getImage = res }
+              )
+            , ( states.getMeme
+              , \res -> { states | getMeme = res }
               )
             , ( states.startup
               , \res -> { states | startup = res }
@@ -365,6 +383,104 @@ getImageStateProcess response storageState =
 getImageDone : (Image -> model -> ( model, Cmd msg )) -> String -> String -> model -> ( model, Cmd msg )
 getImageDone receiver hash url model =
     receiver { url = url, hash = hash } model
+
+
+initialGetMemeState : Wrappers model msg -> StorageState model msg
+initialGetMemeState wrappers =
+    makeGetMemeState wrappers "" (\_ _ model -> ( model, Cmd.none ))
+
+
+makeGetMemeState : Wrappers model msg -> String -> (String -> Meme -> model -> ( model, Cmd msg )) -> StorageState model msg
+makeGetMemeState wrappers name receiver =
+    GetMemeState
+        { name = name
+        , meme = Nothing
+        , receiver = receiver
+        , wrappers = wrappers
+        }
+
+
+startGetMeme : Wrappers model msg -> (String -> Meme -> model -> ( model, Cmd msg )) -> String -> model -> ( model, Cmd msg )
+startGetMeme wrappers receiver name model =
+    let
+        pair =
+            { prefix = pK.memes
+            , subkey = name
+            }
+
+        (LocalStorageStates localStorageStates) =
+            wrappers.localStorageStates model
+
+        state =
+            localStorageStates.getMeme
+
+        state2 =
+            { state
+                | state =
+                    makeGetMemeState wrappers name receiver
+            }
+    in
+    ( wrappers.setLocalStorageStates
+        (LocalStorageStates { localStorageStates | getMeme = state2 })
+        model
+    , Sequence.send state2 (DbGet pair)
+    )
+
+
+getMemeStateProcess : DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
+getMemeStateProcess response storageState =
+    let
+        nullReturn =
+            ( DbNothing, storageState )
+    in
+    case storageState of
+        GetMemeState state ->
+            let
+                { name, meme, receiver, wrappers } =
+                    state
+            in
+            case meme of
+                Nothing ->
+                    case Sequence.decodeExpectedDbGot ED.memeDecoder name response of
+                        Just ( pair, Just gotMeme ) ->
+                            ( DbGet <| KeyPair pK.imageurls gotMeme.image.hash
+                            , GetMemeState
+                                { state | meme = Just gotMeme }
+                            )
+
+                        _ ->
+                            nullReturn
+
+                Just gotMeme ->
+                    case Sequence.decodeExpectedDbGot JD.string "" response of
+                        Just ( _, Just url ) ->
+                            let
+                                image =
+                                    gotMeme.image
+
+                                filledMeme =
+                                    { gotMeme
+                                        | image = { image | url = url }
+                                    }
+                            in
+                            ( DbCustomRequest <|
+                                Task.perform wrappers.sequenceDone
+                                    (Task.succeed <|
+                                        getMemeDone receiver name filledMeme
+                                    )
+                            , initialGetMemeState wrappers
+                            )
+
+                        _ ->
+                            nullReturn
+
+        _ ->
+            nullReturn
+
+
+getMemeDone : (String -> Meme -> model -> ( model, Cmd msg )) -> String -> Meme -> model -> ( model, Cmd msg )
+getMemeDone receiver name meme model =
+    receiver name meme model
 
 
 initialStartupState : Wrappers model msg -> StorageState model msg
@@ -543,7 +659,15 @@ startupStateProcess response storageState =
                                 )
 
                             _ ->
-                                abortTriplet
+                                -- Show a blank image, instead of failing startup
+                                ( True
+                                , { state
+                                    | image =
+                                        Just
+                                            { url = "", hash = "nohash" }
+                                  }
+                                , noPair
+                                )
 
                     else
                         abortTriplet
