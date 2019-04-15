@@ -453,14 +453,22 @@ getMemeStateProcess response storageState =
 
                 Just gotMeme ->
                     case Sequence.decodeExpectedDbGot JD.string "" response of
-                        Just ( _, Just url ) ->
+                        Just ( _, maybeUrl ) ->
                             let
                                 image =
                                     gotMeme.image
 
+                                newImage =
+                                    case maybeUrl of
+                                        Just url ->
+                                            { image | url = url }
+
+                                        Nothing ->
+                                            { url = "", hash = "nohash" }
+
                                 filledMeme =
                                     { gotMeme
-                                        | image = { image | url = url }
+                                        | image = newImage
                                     }
                             in
                             ( DbCustomRequest <|
