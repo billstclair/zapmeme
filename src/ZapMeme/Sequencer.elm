@@ -89,6 +89,8 @@ type StorageState model msg
         , receiver : SavedModel -> Meme -> Maybe String -> model -> ( model, Cmd msg )
         , wrappers : Wrappers model msg
         }
+      -- There's no receiver here, because Main.imagesDialog
+      -- gets the thumbnails and imageMemes directly from here
     | PrepareImagesDialogState
         { hashes : List KeyPair
         , thumbnails : Dict String Image -- hash -> image
@@ -99,8 +101,8 @@ type StorageState model msg
         , wrappers : Wrappers model msg
         }
     | LoadDataState
-        { hashes : List String
-        , names : List String
+        { hashes : List KeyPair
+        , names : List KeyPair
         , images : List Image
         , memes : List Meme
         , receiver : List Image -> List Meme -> model -> ( model, Cmd msg )
@@ -634,10 +636,7 @@ prepareImagesStateProcess response storageState =
                                 nextMeme () =
                                     case state.names of
                                         [] ->
-                                            ( True
-                                            , state
-                                            , DbNothing
-                                            )
+                                            doneTriplet
 
                                         pair :: rest ->
                                             ( False
@@ -765,9 +764,9 @@ prepareImagesStateProcess response storageState =
                             ( False, state, DbNothing )
             in
             if done then
-                ( DbCustomRequest <|
-                    Task.perform state.wrappers.sequenceDone
-                        (Task.succeed prepareImagesDone)
+                -- There is no receiver for `PrepareImagesDialogState`.
+                -- The rendering code works directly from the state.
+                ( DbNothing
                 , PrepareImagesDialogState state2
                 )
 
@@ -801,25 +800,213 @@ injectThumbnail wrappers url hash model =
             ]
 
 
-prepareImagesDone : model -> ( model, Cmd msg )
-prepareImagesDone model =
-    -- TODO
-    model |> withNoCmd
-
-
 initialLoadDataState : Wrappers model msg -> StorageState model msg
 initialLoadDataState wrappers =
+    makeLoadDataState wrappers (\_ _ model -> ( model, Cmd.none ))
+
+
+makeLoadDataState : Wrappers model msg -> (List Image -> List Meme -> model -> ( model, Cmd msg )) -> StorageState model msg
+makeLoadDataState wrappers receiver =
     LoadDataState
         { hashes = []
         , names = []
         , images = []
         , memes = []
-        , receiver = \_ _ model -> ( model, Cmd.none )
+        , receiver = receiver
         , wrappers = wrappers
         }
 
 
+startLoadData : Wrappers model msg -> (List Image -> List Meme -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+startLoadData wrappers receiver model =
+    let
+        listImageurlsPair =
+            { prefix = pK.imageurls
+            , subkey = "."
+            }
+
+        (LocalStorageStates localStorageStates) =
+            wrappers.localStorageStates model
+
+        state =
+            localStorageStates.loadData
+
+        state2 =
+            { state
+                | state =
+                    makeLoadDataState wrappers receiver
+            }
+    in
+    wrappers.setLocalStorageStates
+        (LocalStorageStates { localStorageStates | loadData = state2 })
+        model
+        |> withCmd
+            (Sequence.send state2 <|
+                DbListKeys listImageurlsPair
+            )
+
+
 loadDataStateProcess : DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
 loadDataStateProcess response storageState =
-    -- TODO
-    ( DbNothing, storageState )
+    case storageState of
+        LoadDataState state ->
+            let
+                doneTriplet =
+                    ( True, state, DbNothing )
+
+                nothingTriplet =
+                    ( False, state, DbNothing )
+
+                ( done, state2, request ) =
+                    case response of
+                        DbKeys { prefix } keys ->
+                            if prefix == pK.imageurls then
+                                case keys of
+                                    [] ->
+                                        doneTriplet
+
+                                    key :: rest ->
+                                        ( False
+                                        , { state | hashes = rest }
+                                        , DbGet key
+                                        )
+
+                            else if prefix == pK.memes then
+                                case keys of
+                                    [] ->
+                                        doneTriplet
+
+                                    key :: rest ->
+                                        ( False
+                                        , { state | names = rest }
+                                        , DbGet key
+                                        )
+
+                            else
+                                -- Can't happen, but no way to continue
+                                doneTriplet
+
+                        DbGot { prefix, subkey } value ->
+                            if prefix == pK.imageurls then
+                                let
+                                    state3 =
+                                        case value of
+                                            Nothing ->
+                                                state
+
+                                            Just v ->
+                                                case JD.decodeValue JD.string v of
+                                                    Err _ ->
+                                                        state
+
+                                                    Ok url ->
+                                                        { state
+                                                            | images =
+                                                                { hash = subkey
+                                                                , url = url
+                                                                }
+                                                                    :: state.images
+                                                        }
+
+                                    ( state4, req ) =
+                                        case state3.hashes of
+                                            [] ->
+                                                ( state3
+                                                , DbListKeys <| KeyPair pK.memes "."
+                                                )
+
+                                            key :: rest ->
+                                                ( { state3 | hashes = rest }
+                                                , DbGet key
+                                                )
+                                in
+                                ( False, state4, req )
+
+                            else if prefix == pK.memes then
+                                let
+                                    state3 =
+                                        case value of
+                                            Nothing ->
+                                                state
+
+                                            Just v ->
+                                                case ED.decodeMeme v of
+                                                    Err _ ->
+                                                        state
+
+                                                    Ok meme ->
+                                                        { state
+                                                            | memes =
+                                                                meme :: state.memes
+                                                        }
+                                in
+                                case state3.names of
+                                    [] ->
+                                        ( True, state3, DbNothing )
+
+                                    key :: rest ->
+                                        ( False
+                                        , { state3
+                                            | names = rest
+                                          }
+                                        , DbGet key
+                                        )
+
+                            else
+                                doneTriplet
+
+                        _ ->
+                            -- Not DbKeys or DbGot, ignore it
+                            ( False, state, DbNothing )
+            in
+            if done then
+                ( DbCustomRequest <|
+                    Task.perform state.wrappers.sequenceDone
+                        (Task.succeed <|
+                            loadDataDone
+                                state2.wrappers
+                                state2.receiver
+                        )
+                , LoadDataState state2
+                )
+
+            else
+                ( request, LoadDataState state2 )
+
+        _ ->
+            -- Not LoadDataState, ignore it
+            ( DbNothing, storageState )
+
+
+loadDataDone : Wrappers model msg -> (List Image -> List Meme -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+loadDataDone wrappers receiver model =
+    let
+        (LocalStorageStates states) =
+            wrappers.localStorageStates model
+
+        state =
+            states.loadData
+    in
+    case state.state of
+        LoadDataState loadDataState ->
+            let
+                ( mdl, cmd ) =
+                    receiver loadDataState.images
+                        loadDataState.memes
+                        model
+
+                state2 =
+                    { state
+                        | state =
+                            initialLoadDataState wrappers
+                    }
+            in
+            ( wrappers.setLocalStorageStates
+                (LocalStorageStates { states | loadData = state2 })
+                mdl
+            , cmd
+            )
+
+        _ ->
+            -- Not LoadDataState, ignore
+            model |> withNoCmd
