@@ -12,6 +12,7 @@
 
 module Main exposing (main)
 
+import Base64
 import Browser exposing (Document, UrlRequest(..))
 import Browser.Dom as Dom exposing (Viewport)
 import Browser.Events as Events
@@ -68,6 +69,7 @@ import Html.Attributes
         , id
         , name
         , placeholder
+        , readonly
         , rows
         , selected
         , size
@@ -89,6 +91,7 @@ import PortFunnel.LocalStorage as LocalStorage
 import PortFunnel.LocalStorage.Sequence as Sequence exposing (KeyPair)
 import PortFunnels exposing (FunnelDict, Handler(..))
 import Set exposing (Set)
+import String.Extra as SE
 import Svg exposing (Svg, foreignObject, g, line, rect, svg)
 import Svg.Attributes
     exposing
@@ -372,6 +375,7 @@ type alias Model =
     , triggerThumbnailUrl : Int
     , savedMemes : Set String
     , storageText : String
+    , base64StorageText : String
     , loadedStorage : StorageMirror
     , expectedStorageKeys : { memes : Int, images : Int }
     , msg : Maybe String
@@ -404,6 +408,7 @@ initialInputs =
     , savedMemeName = "meme"
     , showAllImages = True
     , loadedImages = []
+    , base64Data = False
     }
 
 
@@ -483,6 +488,7 @@ type Msg
     | SetDialog WhichDialog
     | SetMemesDialog
     | SetImagesDialog
+    | SetDataDialog
     | SetSavedMemeName String
     | SaveMeme
     | LoadSavedMeme String
@@ -523,6 +529,7 @@ type Msg
     | SetStorageText String
     | LoadStorageMirror
     | StoreStorageMirror
+    | CheckBase64Data Bool
     | CloseDataDialog
     | StartDownload String String
     | MaybePutImageUrl String String
@@ -638,6 +645,7 @@ init flags url key =
             , triggerThumbnailUrl = 0
             , savedMemes = Set.empty
             , storageText = ""
+            , base64StorageText = ""
             , loadedStorage = StorageMirror [] []
             , expectedStorageKeys = { memes = -1, images = -1 }
             , msg = Nothing
@@ -711,6 +719,7 @@ selectCaption position model =
                         , savedMemeName = model.inputs.savedMemeName
                         , showAllImages = model.inputs.showAllImages
                         , loadedImages = model.inputs.loadedImages
+                        , base64Data = model.inputs.base64Data
                         }
     in
     { model
@@ -957,6 +966,10 @@ updateInternal msg model =
         SetImagesDialog ->
             setImagesDialog model
 
+        SetDataDialog ->
+            { model | dialog = DataDialog }
+                |> withCmd (Task.attempt (\_ -> Noop) (Dom.focus dataTextAreaId))
+
         SetSavedMemeName name ->
             { model | inputs = { inputs | savedMemeName = name } }
                 |> withNoCmd
@@ -1047,11 +1060,13 @@ updateInternal msg model =
                         (WrappedModel model)
             in
             { mdl
-                | dialog = DataDialog
-                , storageText = "loading..."
+                | storageText = "loading..."
                 , inputs = { inputs | loadedImages = [] }
             }
-                |> withCmd cmd
+                |> withCmds
+                    [ cmd
+                    , Task.perform identity <| Task.succeed SetDataDialog
+                    ]
 
         SelectCaption position ->
             selectCaption position model
@@ -1444,7 +1459,15 @@ updateInternal msg model =
                 |> withNoCmd
 
         SetStorageText storageText ->
-            { model | storageText = storageText }
+            { model
+                | storageText = storageText
+                , base64StorageText =
+                    if inputs.base64Data then
+                        base64Encode storageText
+
+                    else
+                        ""
+            }
                 |> withNoCmd
 
         LoadStorageMirror ->
@@ -1458,14 +1481,14 @@ updateInternal msg model =
                 |> withCmd cmd
 
         StoreStorageMirror ->
-            case JD.decodeString ED.storageMirrorDecoder model.storageText of
-                Err _ ->
+            case decodeStorageMirror model.storageText of
+                Nothing ->
                     { model
                         | storageText = "Malformed JSON."
                     }
                         |> withNoCmd
 
-                Ok storage ->
+                Just storage ->
                     { model
                         | storageText = ""
                         , dialog = NoDialog
@@ -1492,6 +1515,18 @@ updateInternal msg model =
                                     storage.memes
                                 ]
                             )
+
+        CheckBase64Data checked ->
+            { model
+                | inputs = { inputs | base64Data = checked }
+                , base64StorageText =
+                    if checked then
+                        base64Encode model.storageText
+
+                    else
+                        ""
+            }
+                |> withNoCmd
 
         CloseDataDialog ->
             { model
@@ -1533,6 +1568,32 @@ updateInternal msg model =
 
                 Ok res ->
                     res
+
+
+decodeStorageMirror : String -> Maybe StorageMirror
+decodeStorageMirror json =
+    case JD.decodeString ED.storageMirrorDecoder json of
+        Ok res ->
+            Just res
+
+        Err _ ->
+            case Base64.decode <| String.replace "\n" "" json of
+                Err e ->
+                    Nothing
+
+                Ok jsn ->
+                    case JD.decodeString ED.storageMirrorDecoder jsn of
+                        Ok res2 ->
+                            Just res2
+
+                        Err _ ->
+                            Nothing
+
+
+base64Encode : String -> String
+base64Encode string =
+    Base64.encode string
+        |> SE.wrap 50
 
 
 modifyExpectedStorageKeys : Int -> Int -> Model -> Model
@@ -1891,7 +1952,7 @@ view model =
                     else
                         "Show Help"
                 ]
-            , button [ onClick <| SetDialog DataDialog ]
+            , button [ onClick <| SetDataDialog ]
                 [ text "Data" ]
             , button [ onClick <| SetMemesDialog ]
                 [ text "Memes" ]
@@ -2909,6 +2970,11 @@ memeNameId =
     "memeName"
 
 
+dataTextAreaId : String
+dataTextAreaId =
+    "dataTextArea"
+
+
 fontSizeLocale : Locale
 fontSizeLocale =
     { usLocale | decimals = 1 }
@@ -3183,6 +3249,10 @@ loadMemeLink name =
 
 dataDialog : Model -> Config Msg
 dataDialog model =
+    let
+        font =
+            Maybe.withDefault defaultFont <| Dict.get "courier-new" safeFontDict
+    in
     { styles = []
     , title = "Data"
     , content =
@@ -3193,11 +3263,30 @@ dataDialog model =
         , button
             [ onClick StoreStorageMirror ]
             [ text "Store" ]
+
+        {- // Makes it much bigger, so don't
+           , br
+           , input
+               [ type_ "checkbox"
+               , onCheck <| CheckBase64Data
+               , checked <| model.inputs.base64Data
+               ]
+               []
+           , text " Base64"
+        -}
         , p []
             [ textarea
-                [ onInput SetStorageText
-                , rows 4
-                , value model.storageText
+                [ id dataTextAreaId
+                , onInput SetStorageText
+                , fontAttribute font
+                , style "height" "10em"
+                , value <|
+                    if model.inputs.base64Data then
+                        model.base64StorageText
+
+                    else
+                        model.storageText
+                , readonly model.inputs.base64Data
                 ]
                 [ text model.storageText ]
             ]
@@ -3603,7 +3692,7 @@ receiveThumbnailUrl url model =
 {-| Result of `ZapMeme.Sequencer.startLoadData`.
 -}
 loadDataDone : List ( String, String ) -> List ( String, Meme ) -> WrappedModel -> ( WrappedModel, Cmd Msg )
-loadDataDone images memes (WrappedModel model) =
+loadDataDone images memes model =
     let
         storageMirror =
             { memes = memes
@@ -3614,6 +3703,6 @@ loadDataDone images memes (WrappedModel model) =
             ED.encodeStorageMirror storageMirror
                 |> JE.encode 2
     in
-    ( WrappedModel { model | storageText = storageText }
-    , Cmd.none
+    ( model
+    , Task.perform SetStorageText <| Task.succeed storageText
     )

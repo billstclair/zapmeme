@@ -12,6 +12,9 @@ This file tracks bugs and ideas for new features.
 
 ## Nice Features
 
+* Save on return in Memes dialog.
+* Default saved meme name to text of first caption, <br> -> " "
+  Unless it was saved under another name (not sure how to encode this).
 * Space above first line of caption text.
   Not useful for bottom positions, but desirable for top and middle.
 * Blank space above and/or below image. Specify color or background image.

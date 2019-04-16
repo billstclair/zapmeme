@@ -1213,8 +1213,16 @@ loadDataStateProcess response storageState =
                                             Just ( _, Just meme ) ->
                                                 { state
                                                     | memes =
-                                                        ( subkey, meme )
-                                                            :: state.memes
+                                                        if
+                                                            List.member meme.image.hash <|
+                                                                List.map Tuple.first
+                                                                    state.images
+                                                        then
+                                                            ( subkey, meme )
+                                                                :: state.memes
+
+                                                        else
+                                                            state.memes
                                                 }
                                 in
                                 case state3.names of
