@@ -32,6 +32,7 @@ This is too complicated for an example here, but see `ZapMeme.Sequencer` (needs 
 
 -}
 
+import AssocList exposing (Dict)
 import Json.Decode as JD exposing (Decoder, Value)
 import Json.Encode as JE
 import PortFunnel
@@ -340,3 +341,47 @@ inject : Injector msg -> State state msg -> DbResponse -> Cmd msg
 inject injector state response =
     injectTask injector state response
         |> Task.perform injector.tagger
+
+
+
+---
+--- Support for tables of state machines.
+---
+
+
+{-| Communication between `Sequence` and your main `Model` and `Msg`.
+-}
+type alias Wrappers key state model msg =
+    { sender : LocalStorage.Message -> Cmd msg
+    , injector : { prefix : String, tagger : Value -> msg }
+    , localStorageStates : model -> LocalStorageStates key state model msg
+    , setLocalStorageStates : LocalStorageStates key state model msg -> model -> model
+    , sequenceDone : (model -> ( model, Cmd msg )) -> msg
+    }
+
+
+type LocalStorageStates key state model msg
+    = LocalStorageStates
+        { label : String
+        , wrappers : Wrappers key state model msg
+        , table : Dict key (State state msg)
+        }
+
+
+makeLocalStorageStates : String -> Wrappers key state model msg -> List ( key, State state msg ) -> LocalStorageStates key state model msg
+makeLocalStorageStates label wrappers states =
+    LocalStorageStates
+        { label = label
+        , wrappers = wrappers
+        , table = AssocList.fromList states
+        }
+
+
+getWrappers : LocalStorageStates key state model msg -> Wrappers key state model msg
+getWrappers (LocalStorageStates states) =
+    states.wrappers
+
+
+getStates : LocalStorageStates key state model msg -> List ( key, State state msg )
+getStates (LocalStorageStates states) =
+    AssocList.toList states.table

@@ -12,7 +12,6 @@
 
 module Main exposing (main)
 
-import Base64
 import Browser exposing (Document, UrlRequest(..))
 import Browser.Dom as Dom exposing (Viewport)
 import Browser.Events as Events
@@ -375,7 +374,6 @@ type alias Model =
     , triggerThumbnailUrl : Int
     , savedMemes : Set String
     , storageText : String
-    , base64StorageText : String
     , loadedStorage : StorageMirror
     , expectedStorageKeys : { memes : Int, images : Int }
     , msg : Maybe String
@@ -408,7 +406,6 @@ initialInputs =
     , savedMemeName = "meme"
     , showAllImages = True
     , loadedImages = []
-    , base64Data = False
     }
 
 
@@ -529,7 +526,6 @@ type Msg
     | SetStorageText String
     | LoadStorageMirror
     | StoreStorageMirror
-    | CheckBase64Data Bool
     | CloseDataDialog
     | StartDownload String String
     | MaybePutImageUrl String String
@@ -645,7 +641,6 @@ init flags url key =
             , triggerThumbnailUrl = 0
             , savedMemes = Set.empty
             , storageText = ""
-            , base64StorageText = ""
             , loadedStorage = StorageMirror [] []
             , expectedStorageKeys = { memes = -1, images = -1 }
             , msg = Nothing
@@ -719,7 +714,6 @@ selectCaption position model =
                         , savedMemeName = model.inputs.savedMemeName
                         , showAllImages = model.inputs.showAllImages
                         , loadedImages = model.inputs.loadedImages
-                        , base64Data = model.inputs.base64Data
                         }
     in
     { model
@@ -1461,12 +1455,6 @@ updateInternal msg model =
         SetStorageText storageText ->
             { model
                 | storageText = storageText
-                , base64StorageText =
-                    if inputs.base64Data then
-                        base64Encode storageText
-
-                    else
-                        ""
             }
                 |> withNoCmd
 
@@ -1515,18 +1503,6 @@ updateInternal msg model =
                                     storage.memes
                                 ]
                             )
-
-        CheckBase64Data checked ->
-            { model
-                | inputs = { inputs | base64Data = checked }
-                , base64StorageText =
-                    if checked then
-                        base64Encode model.storageText
-
-                    else
-                        ""
-            }
-                |> withNoCmd
 
         CloseDataDialog ->
             { model
@@ -1577,23 +1553,7 @@ decodeStorageMirror json =
             Just res
 
         Err _ ->
-            case Base64.decode <| String.replace "\n" "" json of
-                Err e ->
-                    Nothing
-
-                Ok jsn ->
-                    case JD.decodeString ED.storageMirrorDecoder jsn of
-                        Ok res2 ->
-                            Just res2
-
-                        Err _ ->
-                            Nothing
-
-
-base64Encode : String -> String
-base64Encode string =
-    Base64.encode string
-        |> SE.wrap 50
+            Nothing
 
 
 modifyExpectedStorageKeys : Int -> Int -> Model -> Model
@@ -3263,30 +3223,13 @@ dataDialog model =
         , button
             [ onClick StoreStorageMirror ]
             [ text "Store" ]
-
-        {- // Makes it much bigger, so don't
-           , br
-           , input
-               [ type_ "checkbox"
-               , onCheck <| CheckBase64Data
-               , checked <| model.inputs.base64Data
-               ]
-               []
-           , text " Base64"
-        -}
         , p []
             [ textarea
                 [ id dataTextAreaId
                 , onInput SetStorageText
                 , fontAttribute font
                 , style "height" "10em"
-                , value <|
-                    if model.inputs.base64Data then
-                        model.base64StorageText
-
-                    else
-                        model.storageText
-                , readonly model.inputs.base64Data
+                , value model.storageText
                 ]
                 [ text model.storageText ]
             ]

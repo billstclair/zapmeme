@@ -78,7 +78,6 @@ type alias Inputs =
     , savedMemeName : String
     , showAllImages : Bool
     , loadedImages : List String
-    , base64Data : Bool
     }
 
 
