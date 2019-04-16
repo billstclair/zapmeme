@@ -86,6 +86,7 @@ import List.Extra as LE
 import MD5
 import Markdown
 import PortFunnel.LocalStorage as LocalStorage
+import PortFunnel.LocalStorage.Sequence as Sequence exposing (KeyPair)
 import PortFunnels exposing (FunnelDict, Handler(..))
 import Set exposing (Set)
 import Svg exposing (Svg, foreignObject, g, line, rect, svg)
@@ -116,7 +117,12 @@ import Time exposing (Posix)
 import Url exposing (Url)
 import ZapMeme.Data exposing (data)
 import ZapMeme.EncodeDecode as ED
-import ZapMeme.Sequencer as Sequencer exposing (LocalStorageStates, initialMeme)
+import ZapMeme.Sequencer as Sequencer
+    exposing
+        ( LocalStorageStates
+        , initialMeme
+        , pK
+        )
 import ZapMeme.Types
     exposing
         ( Caption
@@ -359,18 +365,12 @@ type alias Model =
     , subscription : Maybe Subscription
     , fontDict : Dict String Font
     , key : Key
-    , receiveImagesHandler : Maybe (String -> Maybe Value -> Cmd Msg)
-    , receivedMeme : Maybe Meme
-    , receivedModel : Maybe SavedModel
     , thumbnailImageUrl : String
     , thumbnailImageHash : String
     , thumbnailImageSize : ( Int, Int )
     , triggerThumbnailProperties : Int
     , triggerThumbnailUrl : Int
     , savedMemes : Set String
-    , memeImages : Dict String String -- meme name -> image hash
-    , imageMemes : Dict String (List String) -- image hash -> list of meme names
-    , loadedImages : List String
     , storageText : String
     , loadedStorage : StorageMirror
     , expectedStorageKeys : { memes : Int, images : Int }
@@ -403,6 +403,7 @@ initialInputs =
     , fileName = "meme"
     , savedMemeName = "meme"
     , showAllImages = True
+    , loadedImages = []
     }
 
 
@@ -521,17 +522,10 @@ type Msg
     | SetShowAllImages Bool
     | SetStorageText String
     | LoadStorageMirror
-    | ReceiveStorageMemeKeys (List String)
-    | ReceiveStorageImageKeys (List String)
-    | ReceiveStorageMeme String (Maybe Value)
-    | ReceiveStorageImage String (Maybe Value)
-    | CheckStorageDone
     | StoreStorageMirror
-    | WaitForStore Int Posix
     | CloseDataDialog
     | StartDownload String String
     | MaybePutImageUrl String String
-    | ReceiveImageKey String (Maybe Value)
     | ReceiveThumbnailProperties ImageProperties
     | GetThumbnailUrl ()
     | ReceiveThumbnailUrl String
@@ -637,18 +631,12 @@ init flags url key =
             , subscription = Nothing
             , fontDict = safeFontDict
             , key = key
-            , receiveImagesHandler = Nothing
-            , receivedMeme = Nothing
-            , receivedModel = Nothing
             , thumbnailImageUrl = ""
             , thumbnailImageHash = ""
             , thumbnailImageSize = ( 0, 0 )
             , triggerThumbnailProperties = 0
             , triggerThumbnailUrl = 0
             , savedMemes = Set.empty
-            , memeImages = Dict.empty
-            , imageMemes = Dict.empty
-            , loadedImages = []
             , storageText = ""
             , loadedStorage = StorageMirror [] []
             , expectedStorageKeys = { memes = -1, images = -1 }
@@ -722,6 +710,7 @@ selectCaption position model =
                         , fileName = model.inputs.fileName
                         , savedMemeName = model.inputs.savedMemeName
                         , showAllImages = model.inputs.showAllImages
+                        , loadedImages = model.inputs.loadedImages
                         }
     in
     { model
@@ -996,10 +985,6 @@ updateInternal msg model =
                 |> withCmd cmd
 
         DeleteSavedMeme name ->
-            let
-                maybeHash =
-                    Dict.get name model.memeImages
-            in
             { model
                 | savedMemes = Set.remove name model.savedMemes
             }
@@ -1041,66 +1026,32 @@ updateInternal msg model =
 
         CheckLoadedImage hash checked ->
             { model
-                | loadedImages =
-                    if checked then
-                        adjoin hash model.loadedImages
+                | inputs =
+                    { inputs
+                        | loadedImages =
+                            if checked then
+                                adjoin hash inputs.loadedImages
 
-                    else
-                        List.filter ((/=) hash) model.loadedImages
+                            else
+                                List.filter ((/=) hash) inputs.loadedImages
+                    }
             }
                 |> withNoCmd
 
         LoadCheckedImages ->
             let
-                images =
-                    model.loadedImages
-
-                imageMemes =
-                    model.imageMemes
-
-                memes =
-                    List.foldl
-                        (\hash res ->
-                            List.concat
-                                [ Dict.get hash imageMemes
-                                    |> Maybe.withDefault []
-                                , res
-                                ]
-                        )
-                        []
-                        images
+                ( WrappedModel mdl, cmd ) =
+                    Sequencer.startLoadDataForImages (Just inputs.loadedImages)
+                        sequencerWrappers
+                        loadDataDone
+                        (WrappedModel model)
             in
-            ( { model
+            { mdl
                 | dialog = DataDialog
-                , storageText = "Loading..."
-                , expectedStorageKeys =
-                    Debug.log "LoadCheckedImages"
-                        { memes = List.length memes
-                        , images = List.length images
-                        }
-              }
-            , [ memes
-                    |> List.map
-                        (\name ->
-                            let
-                                key =
-                                    encodeSubkey pK.memes name
-                            in
-                            getLabeled labels.storageMeme key
-                        )
-              , images
-                    |> List.map
-                        (\hash ->
-                            let
-                                key =
-                                    encodeSubkey pK.imageurls hash
-                            in
-                            getLabeled labels.storageImage key
-                        )
-              ]
-                |> List.concat
-                |> Cmd.batch
-            )
+                , storageText = "loading..."
+                , inputs = { inputs | loadedImages = [] }
+            }
+                |> withCmd cmd
 
         SelectCaption position ->
             selectCaption position model
@@ -1160,16 +1111,6 @@ updateInternal msg model =
             in
             mdl
                 |> withCmd cmd
-
-        ReceiveImageKey hash value ->
-            case model.receiveImagesHandler of
-                Nothing ->
-                    model |> withNoCmd
-
-                Just handler ->
-                    ( { model | receiveImagesHandler = Nothing }
-                    , handler hash value
-                    )
 
         ReceiveThumbnailProperties properties ->
             receiveThumbnailProperties properties model
@@ -1507,122 +1448,14 @@ updateInternal msg model =
                 |> withNoCmd
 
         LoadStorageMirror ->
-            { model
-                | loadedStorage = StorageMirror [] []
-                , expectedStorageKeys = { memes = -1, images = -1 }
-                , storageText = "Loading..."
-            }
-                |> withCmds
-                    [ listKeysLabeled labels.listStorageMemes
-                        (pK.memes ++ ".")
-                    , listKeysLabeled labels.listStorageImages
-                        (pK.imageurls ++ ".")
-                    ]
-
-        ReceiveStorageMemeKeys keys ->
-            ( model
-                |> modifyExpectedStorageKeys (List.length keys + 1) 0
-            , keys
-                |> List.map
-                    (\key ->
-                        getLabeled labels.storageMeme key
-                    )
-                |> Cmd.batch
-            )
-
-        ReceiveStorageImageKeys keys ->
-            ( model
-                |> modifyExpectedStorageKeys 0 (List.length keys + 1)
-            , keys
-                |> List.map
-                    (\key ->
-                        getLabeled labels.storageImage key
-                    )
-                |> Cmd.batch
-            )
-
-        ReceiveStorageMeme name value ->
-            case value of
-                Nothing ->
-                    model
-                        |> modifyExpectedStorageKeys -1 0
-                        |> withCmd checkStorageDone
-
-                Just v ->
-                    case ED.decodeMeme v of
-                        Err _ ->
-                            model
-                                |> modifyExpectedStorageKeys -1 0
-                                |> withCmd checkStorageDone
-
-                        Ok meme ->
-                            let
-                                storage =
-                                    model.loadedStorage
-                            in
-                            { model
-                                | loadedStorage =
-                                    { storage
-                                        | memes = ( name, meme ) :: storage.memes
-                                    }
-                            }
-                                |> withCmd checkStorageDone
-
-        ReceiveStorageImage hash value ->
-            case value of
-                Nothing ->
-                    model
-                        |> modifyExpectedStorageKeys 0 -1
-                        |> withCmd checkStorageDone
-
-                Just v ->
-                    case JD.decodeValue JD.string v of
-                        Err _ ->
-                            model
-                                |> modifyExpectedStorageKeys 0 -1
-                                |> withCmd checkStorageDone
-
-                        Ok url ->
-                            let
-                                storage =
-                                    model.loadedStorage
-                            in
-                            { model
-                                | loadedStorage =
-                                    { storage
-                                        | images = ( hash, url ) :: storage.images
-                                    }
-                            }
-                                |> withCmd checkStorageDone
-
-        CheckStorageDone ->
             let
-                expected =
-                    model.expectedStorageKeys
-
-                storage =
-                    model.loadedStorage
-
-                got =
-                    { memes = List.length storage.memes
-                    , images = List.length storage.images
-                    }
-
-                mdl =
-                    if got == expected then
-                        { model
-                            | storageText =
-                                ED.encodeStorageMirror storage
-                                    |> JE.encode 2
-                            , loadedStorage = StorageMirror [] []
-                            , expectedStorageKeys =
-                                { memes = -1, images = -1 }
-                        }
-
-                    else
-                        model
+                ( WrappedModel mdl, cmd ) =
+                    Sequencer.startLoadData sequencerWrappers
+                        loadDataDone
+                        (WrappedModel model)
             in
-            mdl |> withNoCmd
+            { mdl | storageText = "Loading..." }
+                |> withCmd cmd
 
         StoreStorageMirror ->
             case JD.decodeString ED.storageMirrorDecoder model.storageText of
@@ -1636,6 +1469,9 @@ updateInternal msg model =
                     { model
                         | storageText = ""
                         , dialog = NoDialog
+                        , savedMemes =
+                            List.foldl Set.insert model.savedMemes <|
+                                List.map Tuple.first storage.memes
                     }
                         |> withCmds
                             (List.concat
@@ -1654,30 +1490,8 @@ updateInternal msg model =
                                         putStorageMeme name meme
                                     )
                                     storage.memes
-                                , [ Task.perform (WaitForStore 0) Time.now ]
                                 ]
                             )
-
-        WaitForStore goal now ->
-            let
-                millis =
-                    Time.posixToMillis now
-            in
-            if goal == 0 then
-                model
-                    |> withCmd
-                        (Task.perform (WaitForStore <| millis + 500) Time.now)
-
-            else if millis >= goal then
-                model
-                    |> withCmd
-                        (listKeys <| pK.memes ++ ".")
-
-            else
-                -- I hate busy-waiting but changing Time.every is broken
-                model
-                    |> withCmd
-                        (Task.perform (WaitForStore goal) Time.now)
 
         CloseDataDialog ->
             { model
@@ -1721,11 +1535,6 @@ updateInternal msg model =
                     res
 
 
-checkStorageDone : Cmd Msg
-checkStorageDone =
-    Task.perform identity <| Task.succeed CheckStorageDone
-
-
 modifyExpectedStorageKeys : Int -> Int -> Model -> Model
 modifyExpectedStorageKeys memeInc imageInc model =
     let
@@ -1750,7 +1559,7 @@ setImagesDialog model =
                 (WrappedModel model)
     in
     { mdl | dialog = ImagesDialog }
-        |> withCmds [ cmd, listImages ]
+        |> withCmds [ cmd ]
 
 
 adjoin : a -> List a -> List a
@@ -3296,7 +3105,7 @@ imagesDialog model =
         , text " Show all images "
         , button
             [ onClick LoadCheckedImages
-            , disabled <| model.loadedImages == []
+            , disabled <| model.inputs.loadedImages == []
             ]
             [ text "Load Checked" ]
         , br
@@ -3351,7 +3160,7 @@ savedImageRow model imageMemes image =
             [ input
                 [ type_ "checkbox"
                 , onCheck <| CheckLoadedImage image.hash
-                , checked <| List.member image.hash model.loadedImages
+                , checked <| List.member image.hash model.inputs.loadedImages
                 ]
                 []
             ]
@@ -3458,7 +3267,7 @@ dialogConfig model =
 
 {-
 
-      Persistence
+   Persistence
 
    Keys are in `pK`.
 
@@ -3470,25 +3279,13 @@ dialogConfig model =
    Images are serialized to the hash of their url, so we get only one
    copy of each.
 
+   Writing is done below. Reading is done by ZapMemes.Sequencer.
 -}
 
 
 localStoragePrefix : String
 localStoragePrefix =
     "zapmeme"
-
-
-encodeSubkey : String -> String -> String
-encodeSubkey key subkey =
-    key ++ "." ++ subkey
-
-
-decodeSubkey : String -> ( String, String )
-decodeSubkey fullkey =
-    String.split "." fullkey
-        |> (\list ->
-                ( car list, String.join "." <| cdr list )
-           )
 
 
 dummySavedModel : SavedModel
@@ -3540,20 +3337,6 @@ clear prefix =
     localStorageSend (LocalStorage.clear <| Debug.log "clear" prefix) ()
 
 
-get : String -> Cmd Msg
-get key =
-    localStorageSend (LocalStorage.get <| Debug.log "get" key) ()
-
-
-getLabeled : String -> String -> Cmd Msg
-getLabeled label key =
-    localStorageSend
-        (LocalStorage.getLabeled label <|
-            Debug.log ("getLabeled " ++ label) key
-        )
-        ()
-
-
 put : String -> Maybe Value -> Cmd Msg
 put key value =
     let
@@ -3593,20 +3376,6 @@ putStorageMeme name meme =
             encodeSubkey pK.memes name
     in
     put key (Just <| ED.encodeMeme meme)
-
-
-listKeys : String -> Cmd Msg
-listKeys prefix =
-    localStorageSend (LocalStorage.listKeys <| Debug.log "listKeys" prefix) ()
-
-
-listKeysLabeled : String -> String -> Cmd Msg
-listKeysLabeled label prefix =
-    localStorageSend
-        (LocalStorage.listKeysLabeled label <|
-            Debug.log ("listKeysLabeled " ++ label) prefix
-        )
-        ()
 
 
 putModel : Bool -> Model -> Cmd Msg
@@ -3666,75 +3435,6 @@ putSavedMeme name meme =
     put key value
 
 
-getSavedMeme : String -> Cmd Msg
-getSavedMeme name =
-    let
-        key =
-            encodeSubkey pK.memes name
-    in
-    get key
-
-
-getMemeImage : String -> Cmd Msg
-getMemeImage name =
-    let
-        key =
-            encodeSubkey pK.memes name
-    in
-    getLabeled labels.memeImage key
-
-
-listImages : Cmd Msg
-listImages =
-    listKeysLabeled labels.listImageUrls
-        (pK.imageurls ++ ".")
-
-
-getThumbnail : String -> Cmd Msg
-getThumbnail hash =
-    let
-        key =
-            encodeSubkey pK.thumbnails hash
-    in
-    get key
-
-
-putThumbnail : String -> String -> Cmd Msg
-putThumbnail hash url =
-    let
-        key =
-            encodeSubkey pK.thumbnails hash
-    in
-    put key (Just <| JE.string url)
-
-
-{-| Old labels. Will be replaced by `Sequencer.labels`
--}
-labels =
-    { imageForThumbnail = "imageForThumbnail"
-    , imageFromDialog = "imageFromDialog"
-    , listImageUrls = "listImageUrls"
-    , memeImage = "memeImage"
-    , listStorageMemes = "listStorageMemes"
-    , listStorageImages = "listtorageImages"
-    , storageMeme = "storageMeme"
-    , storageImage = "storageImage"
-    }
-
-
-{-| Plural means there are subkeys, e.g. "memes.<name>","images.<hash>"
--}
-pK =
-    { model = "model"
-    , meme = "meme"
-    , shownimageurl = "shownimageurl"
-    , memes = "memes"
-    , images = "images"
-    , imageurls = "imageurls"
-    , thumbnails = "thumbnails"
-    }
-
-
 
 ---
 --- Interface to ZapMeme.Sequencer
@@ -3792,11 +3492,16 @@ getImageDone image (WrappedModel model) =
 
 {-| Result of Sequencer.startStartup
 -}
-startupDone : SavedModel -> Meme -> Maybe String -> List String -> WrappedModel -> ( WrappedModel, Cmd Msg )
+startupDone : Maybe SavedModel -> Maybe Meme -> Maybe String -> List String -> WrappedModel -> ( WrappedModel, Cmd Msg )
 startupDone savedModel meme maybeShownUrl savedMemes (WrappedModel model) =
     let
         mdl =
-            savedModelToModel savedModel model
+            case savedModel of
+                Nothing ->
+                    model
+
+                Just m ->
+                    savedModelToModel m model
 
         shownUrl =
             if model.showMemeImage then
@@ -3809,7 +3514,13 @@ startupDone savedModel meme maybeShownUrl savedMemes (WrappedModel model) =
         { mdl
             | showMemeImage = shownUrl /= Nothing
             , memeImageUrl = shownUrl
-            , meme = meme
+            , meme =
+                case meme of
+                    Nothing ->
+                        initialMeme
+
+                    Just m ->
+                        m
             , savedMemes = Set.fromList savedMemes
         }
         |> withCmd
@@ -3823,6 +3534,12 @@ startupDone savedModel meme maybeShownUrl savedMemes (WrappedModel model) =
 
 
 --- Internal processing for Sequencer.startPrepareImages
+
+
+encodeSubkey : String -> String -> String
+encodeSubkey prefix subkey =
+    KeyPair prefix subkey
+        |> Sequence.encodePair
 
 
 thumbnailImageWidth : Int

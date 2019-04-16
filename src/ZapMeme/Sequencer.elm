@@ -17,10 +17,12 @@ module ZapMeme.Sequencer exposing
     , initialMeme
     , initialStorageStates
     , injectThumbnail
+    , pK
     , removePrepareImagesImage
     , startGetImage
     , startGetMeme
     , startLoadData
+    , startLoadDataForImages
     , startPrepareImages
     , startSaveImage
     , startStartup
@@ -114,7 +116,7 @@ type StorageState model msg
         , image : Maybe Image
         , shownUrl : Maybe String
         , savedMemes : List String
-        , receiver : SavedModel -> Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )
+        , receiver : Maybe SavedModel -> Maybe Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )
         , wrappers : Wrappers model msg
         }
       -- There's no receiver here, because Main.imagesDialog
@@ -503,7 +505,7 @@ initialStartupState wrappers =
     makeStartupState wrappers (\_ _ _ _ model -> ( model, Cmd.none ))
 
 
-makeStartupState : Wrappers model msg -> (SavedModel -> Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> StorageState model msg
+makeStartupState : Wrappers model msg -> (Maybe SavedModel -> Maybe Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> StorageState model msg
 makeStartupState wrappers receiver =
     StartupState
         { model = Nothing
@@ -558,7 +560,7 @@ initialMeme =
     }
 
 
-startStartup : Wrappers model msg -> (SavedModel -> Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+startStartup : Wrappers model msg -> (Maybe SavedModel -> Maybe Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
 startStartup wrappers receiver model =
     let
         (LocalStorageStates localStorageStates) =
@@ -704,7 +706,7 @@ startupStateProcess response storageState =
             nullReturn
 
 
-startupDone : Wrappers model msg -> (SavedModel -> Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+startupDone : Wrappers model msg -> (Maybe SavedModel -> Maybe Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
 startupDone wrappers receiver model =
     let
         (LocalStorageStates states) =
@@ -715,6 +717,17 @@ startupDone wrappers receiver model =
     in
     case state.state of
         StartupState startupState ->
+            let
+                mdl =
+                    wrappers.setLocalStorageStates
+                        (LocalStorageStates
+                            { states
+                                | startup =
+                                    { state | state = initialStartupState wrappers }
+                            }
+                        )
+                        model
+            in
             case
                 ( ( startupState.model, startupState.meme, startupState.image )
                 , startupState.shownUrl
@@ -722,28 +735,14 @@ startupDone wrappers receiver model =
                 )
             of
                 ( ( Just savedModel, Just meme, Just image ), shownUrl, savedMemes ) ->
-                    let
-                        mdl =
-                            wrappers.setLocalStorageStates
-                                (LocalStorageStates
-                                    { states
-                                        | startup =
-                                            { state
-                                                | state =
-                                                    initialStartupState wrappers
-                                            }
-                                    }
-                                )
-                                model
-                    in
-                    receiver savedModel
-                        { meme | image = image }
+                    receiver (Just savedModel)
+                        (Just { meme | image = image })
                         shownUrl
                         savedMemes
-                        model
+                        mdl
 
                 _ ->
-                    model |> withNoCmd
+                    receiver Nothing Nothing Nothing [] mdl
 
         _ ->
             model |> withNoCmd
@@ -1048,13 +1047,13 @@ injectThumbnail wrappers url hash model =
 
 initialLoadDataState : Wrappers model msg -> StorageState model msg
 initialLoadDataState wrappers =
-    makeLoadDataState wrappers (\_ _ model -> ( model, Cmd.none ))
+    makeLoadDataState wrappers (\_ _ model -> ( model, Cmd.none )) []
 
 
-makeLoadDataState : Wrappers model msg -> (List ( String, String ) -> List ( String, Meme ) -> model -> ( model, Cmd msg )) -> StorageState model msg
-makeLoadDataState wrappers receiver =
+makeLoadDataState : Wrappers model msg -> (List ( String, String ) -> List ( String, Meme ) -> model -> ( model, Cmd msg )) -> List KeyPair -> StorageState model msg
+makeLoadDataState wrappers receiver hashes =
     LoadDataState
-        { hashes = []
+        { hashes = hashes
         , names = []
         , images = []
         , memes = []
@@ -1064,7 +1063,17 @@ makeLoadDataState wrappers receiver =
 
 
 startLoadData : Wrappers model msg -> (List ( String, String ) -> List ( String, Meme ) -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
-startLoadData wrappers receiver model =
+startLoadData =
+    startLoadDataForImages Nothing
+
+
+cdr : List a -> List a
+cdr list =
+    List.tail list |> Maybe.withDefault []
+
+
+startLoadDataForImages : Maybe (List String) -> Wrappers model msg -> (List ( String, String ) -> List ( String, Meme ) -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
+startLoadDataForImages maybeImages wrappers receiver model =
     let
         listImageurlsPair =
             { prefix = pK.imageurls
@@ -1077,18 +1086,36 @@ startLoadData wrappers receiver model =
         state =
             localStorageStates.loadData
 
+        hashes =
+            case maybeImages of
+                Just list ->
+                    List.map (KeyPair pK.imageurls) list
+
+                Nothing ->
+                    []
+
         state2 =
             { state
                 | state =
-                    makeLoadDataState wrappers receiver
+                    makeLoadDataState wrappers receiver (cdr hashes)
             }
     in
     wrappers.setLocalStorageStates
         (LocalStorageStates { localStorageStates | loadData = state2 })
         model
         |> withCmd
-            (Sequence.send state2 <|
-                DbListKeys listImageurlsPair
+            (if maybeImages == Nothing then
+                Sequence.send state2 <|
+                    DbListKeys listImageurlsPair
+
+             else
+                case hashes of
+                    [] ->
+                        Cmd.none
+
+                    key :: _ ->
+                        Sequence.send state2 <|
+                            DbGet key
             )
 
 

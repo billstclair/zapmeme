@@ -363,6 +363,7 @@ encodeInputs inputs =
         , ( "fileName", JE.string inputs.fileName )
         , ( "savedMemeName", JE.string inputs.savedMemeName )
         , ( "showAllImages", JE.bool inputs.showAllImages )
+        , ( "loadedImages", JE.list JE.string inputs.loadedImages )
         ]
 
 
@@ -384,6 +385,7 @@ inputsDecoder =
         |> required "fileName" JD.string
         |> optional "savedMemeName" JD.string ""
         |> optional "showAllImages" JD.bool True
+        |> optional "loadedImages" (JD.list JD.string) []
 
 
 

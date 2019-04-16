@@ -17,6 +17,8 @@ module PortFunnel.LocalStorage.Sequence exposing
     , State
     , dbResponseToValue
     , decodeExpectedDbGot
+    , decodePair
+    , encodePair
     , inject
     , injectTask
     , multiProcess
