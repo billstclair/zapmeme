@@ -11,33 +11,51 @@
 
 
 module PortFunnel.LocalStorage.Sequence exposing
-    ( DbRequest(..)
-    , DbResponse(..)
-    , KeyPair
-    , LocalStorageStates
-    , State
-    , Wrappers
-    , dbResponseToValue
-    , decodeExpectedDbGot
-    , decodePair
-    , encodePair
-    , getFullState
-    , getState
-    , inject
-    , injectTask
-    , makeLocalStorageStates
-    , makeNullState
-    , process
-    , processStates
-    , send
-    , setState
-    , setStateOnly
-    , update
+    ( Wrappers, LocalStorageStates, State
+    , KeyPair, DbRequest(..), DbResponse(..)
+    , makeLocalStorageStates, makeNullState
+    , update, processStates, process
+    , send, inject, injectTask
+    , getState, setState, getFullState, setStateOnly
+    , dbResponseToValue, decodeExpectedDbGot, decodePair, encodePair
     )
 
 {-| Make it easier to create complex state machines from `LocalStorage` contents.
 
-This is too complicated for an example here, but see `ZapMeme.Sequencer` (needs link) for a real-life example.
+This is too complicated for an example here, but see [ZapMeme.Sequencer](https://github.com/billstclair/zapmeme/blob/master/src/ZapMeme/Sequencer.elm) for a real-life example.
+
+
+# Types
+
+@docs Wrappers, LocalStorageStates, State
+@docs KeyPair, DbRequest, DbResponse
+
+
+# Constructors
+
+@docs makeLocalStorageStates, makeNullState
+
+
+# Processing incoming messages
+
+You will usually use only `update`, but the others let you do lower-level processing yourself.
+
+@docs update, processStates, process
+
+
+# LocalStorage interaction outside of `State.process`
+
+@docs send, inject, injectTask
+
+
+# State accessors
+
+@docs getState, setState, getFullState, setStateOnly
+
+
+# Utilities
+
+@docs dbResponseToValue, decodeExpectedDbGot, decodePair, encodePair
 
 -}
 
