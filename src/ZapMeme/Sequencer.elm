@@ -623,9 +623,7 @@ startupStateProcess wrappers response storageState =
             ( if done then
                 DbCustomRequest <|
                     Task.perform wrappers.sequenceDone
-                        (Task.succeed <|
-                            startupDone wrappers state2.receiver
-                        )
+                        (Task.succeed <| startupDone wrappers)
 
               else
                 DbGet nextPair
@@ -637,8 +635,8 @@ startupStateProcess wrappers response storageState =
             nullReturn
 
 
-startupDone : Wrappers model msg -> (Maybe SavedModel -> Maybe Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
-startupDone wrappers receiver model =
+startupDone : Wrappers model msg -> model -> ( model, Cmd msg )
+startupDone wrappers model =
     case Sequence.getState wrappers Startup model of
         Nothing ->
             ( model, Cmd.none )
@@ -660,14 +658,14 @@ startupDone wrappers receiver model =
                         )
                     of
                         ( ( Just savedModel, Just meme, Just image ), shownUrl, savedMemes ) ->
-                            receiver (Just savedModel)
+                            startupState.receiver (Just savedModel)
                                 (Just { meme | image = image })
                                 shownUrl
                                 savedMemes
                                 mdl
 
                         _ ->
-                            receiver Nothing Nothing Nothing [] mdl
+                            startupState.receiver Nothing Nothing Nothing [] mdl
 
                 _ ->
                     model |> withNoCmd
@@ -1156,9 +1154,7 @@ loadDataStateProcess wrappers response storageState =
             if done then
                 ( DbCustomRequest <|
                     Task.perform wrappers.sequenceDone
-                        (Task.succeed <|
-                            loadDataDone wrappers state2.receiver
-                        )
+                        (Task.succeed <| loadDataDone wrappers)
                 , LoadDataState state2
                 )
 
@@ -1170,8 +1166,8 @@ loadDataStateProcess wrappers response storageState =
             ( DbNothing, storageState )
 
 
-loadDataDone : Wrappers model msg -> (List ( String, String ) -> List ( String, Meme ) -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
-loadDataDone wrappers receiver model =
+loadDataDone : Wrappers model msg -> model -> ( model, Cmd msg )
+loadDataDone wrappers model =
     case Sequence.getState wrappers LoadData model of
         Nothing ->
             ( model, Cmd.none )
@@ -1181,7 +1177,7 @@ loadDataDone wrappers receiver model =
                 LoadDataState loadDataState ->
                     let
                         ( mdl, cmd ) =
-                            receiver loadDataState.images
+                            loadDataState.receiver loadDataState.images
                                 loadDataState.memes
                                 model
 

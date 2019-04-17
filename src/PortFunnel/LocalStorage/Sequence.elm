@@ -88,17 +88,22 @@ dummyProcess wrappers response state =
     ( DbNothing, state )
 
 
+nullLabel : String
+nullLabel =
+    "If somebody uses this lable they'll get what they deserve!!"
+
+
 isNullState : State key state model msg -> Bool
 isNullState state =
-    dummyProcess == state.process
+    nullLabel == state.label
 
 
 makeNullState : state -> NullState key state model msg
 makeNullState state =
     NullState
         { state = state
-        , label = ""
-        , process = \_ _ st -> ( DbNothing, st )
+        , label = nullLabel
+        , process = dummyProcess
         }
 
 
