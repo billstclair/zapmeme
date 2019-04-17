@@ -385,3 +385,48 @@ getWrappers (LocalStorageStates states) =
 getStates : LocalStorageStates key state model msg -> List ( key, State state msg )
 getStates (LocalStorageStates states) =
     AssocList.toList states.table
+
+
+setStates : List ( key, State state msg ) -> LocalStorageStates key state model msg -> LocalStorageStates key state model msg
+setStates stateList (LocalStorageStates states) =
+    LocalStorageStates
+        { states | table = AssocList.fromList stateList }
+
+
+getState : key -> LocalStorageStates key state model msg -> Maybe (State state msg)
+getState key (LocalStorageStates states) =
+    AssocList.get key states.table
+
+
+putState : key -> State state msg -> LocalStorageStates key state model msg -> LocalStorageStates key state model msg
+putState key state (LocalStorageStates states) =
+    LocalStorageStates
+        { states | table = AssocList.insert key state states.table }
+
+
+removeState : key -> LocalStorageStates key state model msg -> LocalStorageStates key state model msg
+removeState key (LocalStorageStates states) =
+    LocalStorageStates
+        { states | table = AssocList.remove key states.table }
+
+
+processStates : LocalStorage.Response -> LocalStorageStates key state model msg -> ( LocalStorageStates key state model msg, Cmd msg )
+processStates response (LocalStorageStates states) =
+    let
+        loop key state ( states3, cmd2 ) =
+            case process response state of
+                Nothing ->
+                    ( states3, cmd2 )
+
+                Just ( state2, cmd3 ) ->
+                    ( { states3
+                        | table =
+                            AssocList.insert key state2 states3.table
+                      }
+                    , Cmd.batch [ cmd3, cmd2 ]
+                    )
+
+        ( states2, cmd ) =
+            AssocList.foldl loop ( states, Cmd.none ) states.table
+    in
+    ( LocalStorageStates states2, cmd )

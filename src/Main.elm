@@ -3291,7 +3291,7 @@ dataDialog : Model -> Config Msg
 dataDialog model =
     let
         font =
-            Maybe.withDefault defaultFont <| Dict.get "courier-new" safeFontDict
+            Maybe.withDefault defaultFont <| Dict.get "courier" safeFontDict
     in
     { styles = []
     , title = "Data"
@@ -3309,6 +3309,7 @@ dataDialog model =
                 , onInput SetStorageText
                 , fontAttribute font
                 , style "height" "10em"
+                , style "width" "90%"
                 , value model.storageText
                 ]
                 [ text model.storageText ]
