@@ -19,6 +19,7 @@ import Browser.Navigation as Navigation exposing (Key)
 import Bytes exposing (Bytes)
 import Cmd.Extra exposing (withCmd, withCmds, withNoCmd)
 import CustomElement.ImageProperties as ImageProperties exposing (ImageProperties)
+import CustomElement.IsFontAvailable as IsFontAvailable exposing (AvailableFonts)
 import CustomElement.SvgToDataUrl as SvgToDataUrl exposing (ReturnedFile, ReturnedUrl)
 import Dialog exposing (Config, Visible)
 import Dict exposing (Dict)
@@ -361,6 +362,8 @@ type alias Model =
     , memeImageUrl : Maybe String
     , triggerReturnedFile : Int
     , triggerReturnedUrl : Int
+    , triggerIsFontAvailable : Int
+    , fontCheckDelay : Int
     , mimeType : String
     , incrementButton : Button ()
     , decrementButton : Button ()
@@ -532,6 +535,8 @@ type Msg
     | ReceiveThumbnailProperties ImageProperties
     | GetThumbnailUrl ()
     | ReceiveThumbnailUrl String
+    | FontCheck
+    | ReceiveAvailableFonts AvailableFonts
     | GetImageFromDialog String
     | HandleUrlRequest UrlRequest
     | HandleUrlChange Url
@@ -615,6 +620,8 @@ init flags url key =
             , memeImageUrl = Nothing
             , triggerReturnedFile = 0
             , triggerReturnedUrl = 0
+            , triggerIsFontAvailable = 0
+            , fontCheckDelay = round <| 500 / shortRepeatTimeDelay
             , savedSelectedPosition = Nothing
             , fileName = "meme.jpg"
             , mimeType = "image/jpeg"
@@ -909,19 +916,36 @@ updateInternal msg model =
                         |> withNoCmd
 
         Tick posix ->
+            let
+                ( mdl, cmd ) =
+                    if model.fontCheckDelay < 0 then
+                        ( model, Cmd.none )
+
+                    else
+                        ( { model | fontCheckDelay = model.fontCheckDelay - 1 }
+                        , if model.fontCheckDelay == 0 then
+                            Task.perform identity <|
+                                Task.succeed FontCheck
+
+                          else
+                            Cmd.none
+                        )
+            in
             case model.subscription of
                 Nothing ->
-                    model |> withNoCmd
+                    mdl |> withCmd cmd
 
                 Just { millis, buttonMsg, operation } ->
                     if millis >= 0 && millis <= Time.posixToMillis posix then
-                        ( model
-                        , Task.perform (ButtonMsg buttonMsg) <|
-                            Task.succeed operation
-                        )
+                        mdl
+                            |> withCmds
+                                [ Task.perform (ButtonMsg buttonMsg) <|
+                                    Task.succeed operation
+                                , cmd
+                                ]
 
                     else
-                        model |> withNoCmd
+                        mdl |> withCmd cmd
 
         WindowResize w h ->
             { model | windowSize = ( w, h ) }
@@ -1133,6 +1157,16 @@ updateInternal msg model =
 
         ReceiveThumbnailUrl url ->
             receiveThumbnailUrl url model
+
+        FontCheck ->
+            { model
+                | triggerIsFontAvailable =
+                    model.triggerIsFontAvailable + 1
+            }
+                |> withNoCmd
+
+        ReceiveAvailableFonts fonts ->
+            receiveAvailableFonts fonts model
 
         GetImageFromDialog hash ->
             let
@@ -1730,35 +1764,42 @@ defaultFont =
 
 {-| Started life as <http://web.mit.edu/jmorzins/www/@/css/fonts.css>
 -}
-safeFontPairs : List ( String, String )
-safeFontPairs =
-    [ ( "helvetica", "helvetica,sans-serif" )
-    , ( "arial", "arial,helvetica,sans-serif" )
-    , ( "verdana", "verdana,arial,helvetica,sans-serif" )
-    , ( "tahoma", "tahoma,arial,helvetica,sans-serif" )
-    , ( "arial-black", "\"Arial Black\",helvetica,sans-serif" )
-    , ( "comic-sans-ms", "\"Comic Sans MS\",arial,helvetica,sans-serif" )
-    , ( "trebuchet-ms", "\"Trebuchet MS\",arial,helvetica,sans-serif" )
-    , ( "impact", "impact,helvetica,sans-serif" )
-    , ( "courier", "courier,monospace" )
-    , ( "courier-new", "\"courier new\",courier,monospace" )
-    , ( "andale-mono", "\"andale mono\",\"monotype.com\",monaco,\"courier new\",courier,monospace" )
-    , ( "georgia", "georgia,times,serif" )
-    , ( "times", "\"Times Roman\",times,serif" )
-    , ( "times-new-roman", "\"Times New Roman\",\"Times Roman\",TimesNR,times,serif" )
-    , ( "palatino", "\"Palatino Linotype\",\"URW Palladio L\",\"palladio l\",palatino,\"book antiqua\",times,serif" )
-    , ( "century-schoolbook", "\"Century Schoolbook\",Century,\"new century schoolbook\",\"Century Schoolbook L\",times,serif" )
-    , ( "bookman", "\"Bookman Old Style\",\"URW Bookman L\",\"itc bookman\",times,serif" )
-    , ( "garamond", "Garamond,\"Garamond Antiqua\",times,serif" )
-    , ( "avant-garde", "\"Century Gothic\",\"Avant Garde Gothic\",\"Avant Garde\",\"URW Gothic L\",helvetica,sans-serif" )
+safeFontTriplets : List ( String, String, List String )
+safeFontTriplets =
+    [ ( "helvetica", "helvetica,sans-serif", [ "helvetica" ] )
+    , ( "arial", "arial,helvetica,sans-serif", [ "arial" ] )
+    , ( "verdana", "verdana,arial,helvetica,sans-serif", [ "verdana" ] )
+    , ( "tahoma", "tahoma,arial,helvetica,sans-serif", [ "tahoma" ] )
+    , ( "arial-black", "\"Arial Black\",helvetica,sans-serif", [ "Arial Black" ] )
+    , ( "comic-sans-ms", "\"Comic Sans MS\",arial,helvetica,sans-serif", [ "Comic Sans MS" ] )
+    , ( "trebuchet-ms", "\"Trebuchet MS\",arial,helvetica,sans-serif", [ "Trebuchet MS" ] )
+    , ( "impact", "impact,helvetica,sans-serif", [ "impact" ] )
+    , ( "courier", "courier,monospace", [ "courier" ] )
+    , ( "courier-new", "\"courier new\",courier,monospace", [ "courier new" ] )
+    , ( "andale-mono", "\"andale mono\",\"monotype.com\",monaco,\"courier new\",courier,monospace", [ "andale mono", "monotype.com", "monaco" ] )
+    , ( "georgia", "georgia,times,serif", [ "georgia" ] )
+    , ( "times", "\"Times Roman\",times,serif", [ "Times Roman", "times" ] )
+    , ( "times-new-roman", "\"Times New Roman\",\"Times Roman\",TimesNR,times,serif", [ "Times New Roman", "TimesNR" ] )
+    , ( "palatino", "\"Palatino Linotype\",\"URW Palladio L\",\"palladio l\",palatino,\"book antiqua\",times,serif", [ "Palatino Linotype", "URW Palladio L", "palladio l", "palatino", "book antiqua" ] )
+    , ( "century-schoolbook", "\"Century Schoolbook\",Century,\"new century schoolbook\",\"Century Schoolbook L\",times,serif", [ "Century Schoolbook", "Century", "new century schoolbook", "Century Schoolbook L" ] )
+    , ( "bookman", "\"Bookman Old Style\",\"URW Bookman L\",\"itc bookman\",times,serif", [ "Bookman Old Style", "URW Bookman L", "itc bookman" ] )
+    , ( "garamond", "Garamond,\"Garamond Antiqua\",times,serif", [ "Garamond", "Garamond Antiqua" ] )
+    , ( "avant-garde", "\"Century Gothic\",\"Avant Garde Gothic\",\"Avant Garde\",\"URW Gothic L\",helvetica,sans-serif", [ "Century Gothic", "Avant Garde Gothic", "Avant Garde", "URW Gothic L" ] )
     ]
+
+
+allFontFamilies : List String
+allFontFamilies =
+    safeFontTriplets
+        |> List.map (\( _, _, families ) -> families)
+        |> List.concat
 
 
 safeFontList : List Font
 safeFontList =
-    safeFontPairs
+    safeFontTriplets
         |> List.sort
-        |> List.map (\( font, family ) -> Font font family)
+        |> List.map (\( font, family, _ ) -> Font font family)
 
 
 safeFontDict : Dict String Font
@@ -1771,6 +1812,36 @@ safeFontDict =
 safeFonts : List String
 safeFonts =
     List.map .font safeFontList
+
+
+receiveAvailableFonts : AvailableFonts -> Model -> ( Model, Cmd Msg )
+receiveAvailableFonts fonts model =
+    let
+        loop ( family, isAvailable ) set =
+            if not isAvailable then
+                set
+
+            else
+                case
+                    LE.find (\( name, _, families ) -> List.member family families)
+                        safeFontTriplets
+                of
+                    Just ( name, _, _ ) ->
+                        Set.insert name set
+
+                    Nothing ->
+                        set
+
+        available =
+            Debug.log "available fonts" <|
+                List.foldl loop Set.empty fonts
+    in
+    { model
+        | fontDict =
+            Dict.filter (\name _ -> Set.member name available)
+                model.fontDict
+    }
+        |> withNoCmd
 
 
 fontAttribute : Font -> Attribute msg
@@ -1940,7 +2011,7 @@ view model =
 
               else
                 text ""
-            , fontParagraph
+            , fontParagraph model
             , p []
                 [ h2 [ style "margin-bottom" "0" ] [ text "ZAP Meme" ]
                 , text <| chars.copyright ++ " 2019 Bill St. Clair"
@@ -1986,6 +2057,12 @@ view model =
                     (\returnedUrl ->
                         ReceiveThumbnailUrl returnedUrl.url
                     )
+                ]
+                []
+            , IsFontAvailable.isFontAvailable
+                [ IsFontAvailable.fonts allFontFamilies
+                , IsFontAvailable.trigger model.triggerIsFontAvailable
+                , IsFontAvailable.onAvailableFonts ReceiveAvailableFonts
                 ]
                 []
             , Dialog.render (dialogConfig model) (model.dialog /= NoDialog)
@@ -2631,8 +2708,8 @@ at the bottom, or by pressing the "Esc" key on your keyboard.
          """
 
 
-fontParagraph : Html Msg
-fontParagraph =
+fontParagraph : Model -> Html Msg
+fontParagraph model =
     p [ style "width" "80%" ] <|
         List.concat
             [ [ span
@@ -2644,7 +2721,10 @@ fontParagraph =
                     [ text "Fonts (click to select)" ]
               , br
               ]
-            , List.map fontExample safeFontList
+            , model.fontDict
+                |> Dict.toList
+                |> List.map Tuple.second
+                |> List.map fontExample
             ]
 
 

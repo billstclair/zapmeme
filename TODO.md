@@ -9,6 +9,10 @@ This file tracks bugs and ideas for new features.
 * More built-in fonts.
   Edit available fonts, in case you don't want all the supplied ones.
   Allow import of Google fonts, and maybe some other repositories.
+* Trim available fonts to those which are actually available.
+  Convert site/js/is-font-available.js to a custom element.
+  Probe it half a second after launch, to give conditional fonts
+  time to load.
 
 ## Nice Features
 
@@ -29,3 +33,5 @@ This file tracks bugs and ideas for new features.
 
 ## Bugs
 
+* The PNG and JPEG buttons no longer show the image on the page in iPhone.
+* The Impact font does not appear in the meme image on iPhone (may be unfixable).

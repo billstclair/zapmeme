@@ -1,3 +1,65 @@
+//////////////////////////////////////////////////////////////////////
+//
+// is-font-available.js
+// Define the `is-font-available` custom element.
+// Copyright (c) 2019 Bill St. Clair <billstclair@gmail.com>
+// Some rights reserved.
+// Distributed under the MIT License
+// See LICENSE
+//
+// Custom element code by Bill St. Clair.
+// Copyright for isFontAvailable function is below.
+//
+//////////////////////////////////////////////////////////////////////
+
+(function (document) {
+
+  // <is-font-available> custom element.
+  customElements.define('is-font-available', class extends HTMLElement {
+    constructor() {
+      super();
+      this._trigger = null;
+    }
+
+    connectedCallback() {
+      // Move along. Nothing to see here.
+    }
+
+    get trigger() {
+      return this._trigger;
+    }
+
+    get fonts () {
+      return this._fonts;
+    }
+
+    set fonts (fonts) {
+      this._fonts = fonts;
+    }
+
+    get availableFonts() {
+      return this._availableFonts || [];
+    }
+
+    set trigger(trigger) {
+      // Don't trigger on first set
+      var doit = this._trigger !== null && this._trigger != trigger;
+      this._trigger = trigger;
+      if (doit) {
+        var fonts = this._fonts;
+        var res = {};
+        if (typeof(fonts) == 'object') {
+          for (var i in fonts) {
+            var font = fonts[i];
+            res[font] = isFontAvailable(font);
+          }
+        }
+        this._availableFonts = res;
+        this.dispatchEvent(new CustomEvent('availableFonts'));
+      }
+    }
+  });
+
 /**
  * Checks if a font is available to be used on a web page.
  *
@@ -8,7 +70,7 @@
  * @author Sam Clarke <sam@samclarke.com>
  * @link https://www.samclarke.com/javascript-is-font-available
  */
-(function (document) {
+
   var width;
   var body = document.body;
 
@@ -37,9 +99,10 @@
   var serifWidth = getWidth('serif');
   var sansWidth  = getWidth('sans-serif');
 
-  window.isFontAvailable = function (font) {
+  function isFontAvailable (font) {
     return monoWidth !== getWidth(font + ',monospace') ||
       sansWidth !== getWidth(font + ',sans-serif') ||
       serifWidth !== getWidth(font + ',serif');
   };
+
 })(document);
