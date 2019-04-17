@@ -12,11 +12,14 @@
 
 module ZapMeme.Sequencer exposing
     ( LocalStorageStates
+    , StateKey
+    , StorageState
     , Wrappers
     , getPrepareImagesData
     , initialMeme
     , initialStorageStates
     , injectThumbnail
+    , nullState
     , pK
     , removePrepareImagesImage
     , startGetImage
@@ -49,6 +52,8 @@ import PortFunnel.LocalStorage.Sequence as Sequence
         ( DbRequest(..)
         , DbResponse(..)
         , KeyPair
+        , LocalStorageStates
+        , Wrappers
         )
 import PortFunnels
 import Task
@@ -94,21 +99,36 @@ labels =
     }
 
 
+{-| Unique names for the state machines.
+-}
+type StateKey
+    = SaveImage
+    | GetImage
+    | GetMeme
+    | Startup
+    | PrepareImages
+    | LoadData
+
+
+nullState : StorageState model msg
+nullState =
+    NullState
+
+
 type StorageState model msg
-    = SaveImageState
+    = NullState
+    | SaveImageState
         { url : String
         , hash : String
         }
     | GetImageState
         { hash : String
         , receiver : Image -> model -> ( model, Cmd msg )
-        , wrappers : Wrappers model msg
         }
     | GetMemeState
         { name : String
         , meme : Maybe Meme
         , receiver : String -> Meme -> model -> ( model, Cmd msg )
-        , wrappers : Wrappers model msg
         }
     | StartupState
         { model : Maybe SavedModel
@@ -117,18 +137,16 @@ type StorageState model msg
         , shownUrl : Maybe String
         , savedMemes : List String
         , receiver : Maybe SavedModel -> Maybe Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )
-        , wrappers : Wrappers model msg
         }
       -- There's no receiver here, because Main.imagesDialog
       -- gets the thumbnails and imageMemes directly from here
-    | PrepareImagesDialogState
+    | PrepareImagesState
         { hashes : List KeyPair
         , thumbnails : Dict String Image -- hash -> image
         , names : List KeyPair
         , memeImage : Dict String String -- name -> hash
         , imageMemes : Dict String (List String) -- hash -> names
         , imageSizeGetter : String -> String -> model -> ( model, Cmd msg )
-        , wrappers : Wrappers model msg
         }
     | LoadDataState
         { hashes : List KeyPair
@@ -136,121 +154,73 @@ type StorageState model msg
         , images : List ( String, String ) --(hash, url)
         , memes : List ( String, Meme ) --(name, meme)
         , receiver : List ( String, String ) -> List ( String, Meme ) -> model -> ( model, Cmd msg )
-        , wrappers : Wrappers model msg
         }
 
 
 {-| This is how we communicate with Main.elm
 -}
 type alias Wrappers model msg =
-    { sender : LocalStorage.Message -> Cmd msg
-    , injector : { prefix : String, tagger : Value -> msg }
-    , localStorageStates : model -> LocalStorageStates model msg
-    , setLocalStorageStates : LocalStorageStates model msg -> model -> model
-    , sequenceDone : (model -> ( model, Cmd msg )) -> msg
-    }
+    Sequence.Wrappers StateKey (StorageState model msg) model msg
 
 
-type LocalStorageStates model msg
-    = LocalStorageStates
-        { wrappers : Wrappers model msg
-        , saveImage : Sequence.State (StorageState model msg) msg
-        , getImage : Sequence.State (StorageState model msg) msg
-        , getMeme : Sequence.State (StorageState model msg) msg
-        , startup : Sequence.State (StorageState model msg) msg
-        , prepareImages : Sequence.State (StorageState model msg) msg
-        , loadData : Sequence.State (StorageState model msg) msg
-        }
+type alias LocalStorageStates model msg =
+    Sequence.LocalStorageStates StateKey (StorageState model msg) model msg
 
 
 initialStorageStates : Wrappers model msg -> LocalStorageStates model msg
 initialStorageStates wrappers =
-    LocalStorageStates
-        { wrappers = wrappers
-        , saveImage =
-            { state = initialSaveImageState
+    Sequence.makeLocalStorageStates wrappers
+        [ ( SaveImage
+          , { state = initialSaveImageState
             , label = labels.saveImage
             , process = saveImageStateProcess
-            , sender = wrappers.sender
             }
-        , getImage =
-            { state = initialGetImageState wrappers
+          )
+        , ( GetImage
+          , { state = initialGetImageState
             , label = labels.getImage
             , process = getImageStateProcess
-            , sender = wrappers.sender
             }
-        , getMeme =
-            { state = initialGetMemeState wrappers
+          )
+        , ( GetMeme
+          , { state = initialGetMemeState
             , label = labels.getMeme
             , process = getMemeStateProcess
-            , sender = wrappers.sender
             }
-        , startup =
-            { state = initialStartupState wrappers
+          )
+        , ( Startup
+          , { state = initialStartupState
             , label = labels.startup
             , process = startupStateProcess
-            , sender = wrappers.sender
             }
-        , prepareImages =
-            { state = initialPrepareImagesDialogState wrappers
+          )
+        , ( PrepareImages
+          , { state = initialPrepareImagesState
             , label = labels.prepareImages
             , process = prepareImagesStateProcess
-            , sender = wrappers.sender
             }
-        , loadData =
-            { state = initialLoadDataState wrappers
+          )
+        , ( LoadData
+          , { state = initialLoadDataState
             , label = labels.loadData
             , process = loadDataStateProcess
-            , sender = wrappers.sender
             }
-        }
+          )
+        ]
 
 
 {-| This is the reason I wrote `PortFunnel.LocalStorage.Sequence`.
 
 To add a new process, you just have to add it to to `labels`,
-`StorageState`, `LocalStorageStates`, & `initialStorageStates`, write
-start, processing, and done functions, and add an element to the
-`Sequence.multiProcess` call below.
+`StorageState`, & `initialStorageStates`, and write start, processing, and
+done functions.
 
 Mostly data driven, as an old lisper likes it.
 
 -}
 storageHandler : Wrappers model msg -> LocalStorage.Response -> PortFunnels.State -> model -> ( model, Cmd msg )
-storageHandler wrappers response state model =
-    let
-        (LocalStorageStates states) =
-            wrappers.localStorageStates model
-    in
-    case
-        Sequence.multiProcess
-            response
-            [ ( states.saveImage
-              , \res -> { states | saveImage = res }
-              )
-            , ( states.getImage
-              , \res -> { states | getImage = res }
-              )
-            , ( states.getMeme
-              , \res -> { states | getMeme = res }
-              )
-            , ( states.startup
-              , \res -> { states | startup = res }
-              )
-            , ( states.prepareImages
-              , \res -> { states | prepareImages = res }
-              )
-            , ( states.loadData
-              , \res -> { states | loadData = res }
-              )
-            ]
-    of
-        Just ( res, setter, cmd ) ->
-            wrappers.setLocalStorageStates (LocalStorageStates <| setter res) model
-                |> withCmd cmd
-
-        _ ->
-            model |> withNoCmd
+storageHandler wrappers response _ model =
+    Sequence.update wrappers model response
 
 
 initialSaveImageState : StorageState model msg
@@ -270,30 +240,21 @@ startSaveImage : Wrappers model msg -> String -> String -> model -> ( model, Cmd
 startSaveImage wrappers hash url model =
     let
         pair =
-            { prefix = pK.images
-            , subkey = hash
-            }
+            KeyPair pK.images hash
 
-        (LocalStorageStates states) =
-            wrappers.localStorageStates model
+        state =
+            makeSaveImageState url hash
 
-        saveImageState =
-            states.saveImage
-
-        state2 =
-            { saveImageState
-                | state = makeSaveImageState url hash
-            }
+        ( mdl, saveImageState ) =
+            Sequence.setState wrappers SaveImage state model
     in
-    ( wrappers.setLocalStorageStates
-        (LocalStorageStates { states | saveImage = state2 })
-        model
-    , Sequence.send state2 (DbGet pair)
+    ( mdl
+    , Sequence.send wrappers saveImageState (DbGet pair)
     )
 
 
-saveImageStateProcess : DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
-saveImageStateProcess response storageState =
+saveImageStateProcess : Wrappers model msg -> DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
+saveImageStateProcess wrappers response storageState =
     case storageState of
         SaveImageState { url, hash } ->
             let
@@ -320,17 +281,16 @@ saveImageStateProcess response storageState =
             ( DbNothing, storageState )
 
 
-initialGetImageState : Wrappers model msg -> StorageState model msg
-initialGetImageState wrappers =
-    makeGetImageState wrappers "" (\_ model -> ( model, Cmd.none ))
+initialGetImageState : StorageState model msg
+initialGetImageState =
+    makeGetImageState "" (\_ model -> ( model, Cmd.none ))
 
 
-makeGetImageState : Wrappers model msg -> String -> (Image -> model -> ( model, Cmd msg )) -> StorageState model msg
-makeGetImageState wrappers hash receiver =
+makeGetImageState : String -> (Image -> model -> ( model, Cmd msg )) -> StorageState model msg
+makeGetImageState hash receiver =
     GetImageState
         { hash = hash
         , receiver = receiver
-        , wrappers = wrappers
         }
 
 
@@ -338,37 +298,27 @@ startGetImage : Wrappers model msg -> (Image -> model -> ( model, Cmd msg )) -> 
 startGetImage wrappers receiver hash model =
     let
         pair =
-            { prefix = pK.imageurls
-            , subkey = hash
-            }
-
-        (LocalStorageStates localStorageStates) =
-            wrappers.localStorageStates model
+            KeyPair pK.imageurls hash
 
         state =
-            localStorageStates.getImage
+            makeGetImageState hash receiver
 
-        state2 =
-            { state
-                | state =
-                    makeGetImageState wrappers hash receiver
-            }
+        ( mdl, saveImageState ) =
+            Sequence.setState wrappers GetImage state model
     in
-    ( wrappers.setLocalStorageStates
-        (LocalStorageStates { localStorageStates | getImage = state2 })
-        model
-    , Sequence.send state2 (DbGet pair)
+    ( mdl
+    , Sequence.send wrappers saveImageState (DbGet pair)
     )
 
 
-getImageStateProcess : DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
-getImageStateProcess response storageState =
+getImageStateProcess : Wrappers model msg -> DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
+getImageStateProcess wrappers response storageState =
     let
         nullReturn =
             ( DbNothing, storageState )
     in
     case storageState of
-        GetImageState { hash, receiver, wrappers } ->
+        GetImageState { hash, receiver } ->
             case Sequence.decodeExpectedDbGot JD.string hash response of
                 Just ( pair, Just url ) ->
                     ( DbCustomRequest <|
@@ -389,18 +339,17 @@ getImageDone receiver hash url model =
     receiver { url = url, hash = hash } model
 
 
-initialGetMemeState : Wrappers model msg -> StorageState model msg
-initialGetMemeState wrappers =
-    makeGetMemeState wrappers "" (\_ _ model -> ( model, Cmd.none ))
+initialGetMemeState : StorageState model msg
+initialGetMemeState =
+    makeGetMemeState "" (\_ _ model -> ( model, Cmd.none ))
 
 
-makeGetMemeState : Wrappers model msg -> String -> (String -> Meme -> model -> ( model, Cmd msg )) -> StorageState model msg
-makeGetMemeState wrappers name receiver =
+makeGetMemeState : String -> (String -> Meme -> model -> ( model, Cmd msg )) -> StorageState model msg
+makeGetMemeState name receiver =
     GetMemeState
         { name = name
         , meme = Nothing
         , receiver = receiver
-        , wrappers = wrappers
         }
 
 
@@ -408,26 +357,16 @@ startGetMeme : Wrappers model msg -> (String -> Meme -> model -> ( model, Cmd ms
 startGetMeme wrappers receiver name model =
     let
         pair =
-            { prefix = pK.memes
-            , subkey = name
-            }
-
-        (LocalStorageStates localStorageStates) =
-            wrappers.localStorageStates model
+            KeyPair pK.memes name
 
         state =
-            localStorageStates.getMeme
+            makeGetMemeState name receiver
 
-        state2 =
-            { state
-                | state =
-                    makeGetMemeState wrappers name receiver
-            }
+        ( mdl, getMemeState ) =
+            Sequence.setState wrappers GetMeme state model
     in
-    ( wrappers.setLocalStorageStates
-        (LocalStorageStates { localStorageStates | getMeme = state2 })
-        model
-    , Sequence.send state2 (DbGet pair)
+    ( mdl
+    , Sequence.send wrappers getMemeState (DbGet pair)
     )
 
 
@@ -436,8 +375,8 @@ nohash =
     "nohash"
 
 
-getMemeStateProcess : DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
-getMemeStateProcess response storageState =
+getMemeStateProcess : Wrappers model msg -> DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
+getMemeStateProcess wrappers response storageState =
     let
         nullReturn =
             ( DbNothing, storageState )
@@ -445,7 +384,7 @@ getMemeStateProcess response storageState =
     case storageState of
         GetMemeState state ->
             let
-                { name, meme, receiver, wrappers } =
+                { name, meme, receiver } =
                     state
             in
             case meme of
@@ -485,7 +424,7 @@ getMemeStateProcess response storageState =
                                     (Task.succeed <|
                                         getMemeDone receiver name filledMeme
                                     )
-                            , initialGetMemeState wrappers
+                            , initialGetMemeState
                             )
 
                         _ ->
@@ -500,13 +439,13 @@ getMemeDone receiver name meme model =
     receiver name meme model
 
 
-initialStartupState : Wrappers model msg -> StorageState model msg
-initialStartupState wrappers =
-    makeStartupState wrappers (\_ _ _ _ model -> ( model, Cmd.none ))
+initialStartupState : StorageState model msg
+initialStartupState =
+    makeStartupState (\_ _ _ _ model -> ( model, Cmd.none ))
 
 
-makeStartupState : Wrappers model msg -> (Maybe SavedModel -> Maybe Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> StorageState model msg
-makeStartupState wrappers receiver =
+makeStartupState : (Maybe SavedModel -> Maybe Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> StorageState model msg
+makeStartupState receiver =
     StartupState
         { model = Nothing
         , savedMemes = []
@@ -514,7 +453,6 @@ makeStartupState wrappers receiver =
         , image = Nothing
         , shownUrl = Nothing
         , receiver = receiver
-        , wrappers = wrappers
         }
 
 
@@ -563,25 +501,18 @@ initialMeme =
 startStartup : Wrappers model msg -> (Maybe SavedModel -> Maybe Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
 startStartup wrappers receiver model =
     let
-        (LocalStorageStates localStorageStates) =
-            wrappers.localStorageStates model
+        pair =
+            KeyPair pK.memes "."
 
         state =
-            localStorageStates.startup
+            makeStartupState receiver
 
-        state2 =
-            { state
-                | state =
-                    makeStartupState wrappers receiver
-            }
+        ( mdl, startupState ) =
+            Sequence.setState wrappers Startup state model
     in
-    wrappers.setLocalStorageStates
-        (LocalStorageStates { localStorageStates | startup = state2 })
-        model
-        |> withCmd
-            (Sequence.send state2 <|
-                DbListKeys (KeyPair pK.memes ".")
-            )
+    ( mdl
+    , Sequence.send wrappers startupState (DbListKeys pair)
+    )
 
 
 dbResponsePrefix : DbResponse -> String
@@ -597,8 +528,8 @@ dbResponsePrefix response =
             ""
 
 
-startupStateProcess : DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
-startupStateProcess response storageState =
+startupStateProcess : Wrappers model msg -> DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
+startupStateProcess wrappers response storageState =
     let
         nullReturn =
             ( DbNothing, storageState )
@@ -691,9 +622,9 @@ startupStateProcess response storageState =
             in
             ( if done then
                 DbCustomRequest <|
-                    Task.perform state2.wrappers.sequenceDone
+                    Task.perform wrappers.sequenceDone
                         (Task.succeed <|
-                            startupDone state2.wrappers state2.receiver
+                            startupDone wrappers state2.receiver
                         )
 
               else
@@ -708,61 +639,54 @@ startupStateProcess response storageState =
 
 startupDone : Wrappers model msg -> (Maybe SavedModel -> Maybe Meme -> Maybe String -> List String -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
 startupDone wrappers receiver model =
-    let
-        (LocalStorageStates states) =
-            wrappers.localStorageStates model
+    case Sequence.getState wrappers Startup model of
+        Nothing ->
+            ( model, Cmd.none )
 
-        state =
-            states.startup
-    in
-    case state.state of
-        StartupState startupState ->
-            let
-                mdl =
-                    wrappers.setLocalStorageStates
-                        (LocalStorageStates
-                            { states
-                                | startup =
-                                    { state | state = initialStartupState wrappers }
-                            }
+        Just state ->
+            case state of
+                StartupState startupState ->
+                    let
+                        mdl =
+                            Sequence.setStateOnly wrappers
+                                Startup
+                                initialStartupState
+                                model
+                    in
+                    case
+                        ( ( startupState.model, startupState.meme, startupState.image )
+                        , startupState.shownUrl
+                        , startupState.savedMemes
                         )
-                        model
-            in
-            case
-                ( ( startupState.model, startupState.meme, startupState.image )
-                , startupState.shownUrl
-                , startupState.savedMemes
-                )
-            of
-                ( ( Just savedModel, Just meme, Just image ), shownUrl, savedMemes ) ->
-                    receiver (Just savedModel)
-                        (Just { meme | image = image })
-                        shownUrl
-                        savedMemes
-                        mdl
+                    of
+                        ( ( Just savedModel, Just meme, Just image ), shownUrl, savedMemes ) ->
+                            receiver (Just savedModel)
+                                (Just { meme | image = image })
+                                shownUrl
+                                savedMemes
+                                mdl
+
+                        _ ->
+                            receiver Nothing Nothing Nothing [] mdl
 
                 _ ->
-                    receiver Nothing Nothing Nothing [] mdl
-
-        _ ->
-            model |> withNoCmd
+                    model |> withNoCmd
 
 
-initialPrepareImagesDialogState : Wrappers model msg -> StorageState model msg
-initialPrepareImagesDialogState wrappers =
-    makePrepareImagesDialogState wrappers (\_ _ model -> ( model, Cmd.none ))
+initialPrepareImagesState : StorageState model msg
+initialPrepareImagesState =
+    makePrepareImagesState (\_ _ model -> ( model, Cmd.none ))
 
 
-makePrepareImagesDialogState : Wrappers model msg -> (String -> String -> model -> ( model, Cmd msg )) -> StorageState model msg
-makePrepareImagesDialogState wrappers imageSizeGetter =
-    PrepareImagesDialogState
+makePrepareImagesState : (String -> String -> model -> ( model, Cmd msg )) -> StorageState model msg
+makePrepareImagesState imageSizeGetter =
+    PrepareImagesState
         { hashes = []
         , thumbnails = Dict.empty
         , names = []
         , memeImage = Dict.empty
         , imageMemes = Dict.empty
         , imageSizeGetter = imageSizeGetter
-        , wrappers = wrappers
         }
 
 
@@ -770,33 +694,23 @@ startPrepareImages : Wrappers model msg -> (String -> String -> model -> ( model
 startPrepareImages wrappers imageSizeGetter model =
     let
         pair =
-            { prefix = pK.imageurls
-            , subkey = "."
-            }
-
-        (LocalStorageStates localStorageStates) =
-            wrappers.localStorageStates model
+            KeyPair pK.imageurls "."
 
         state =
-            localStorageStates.prepareImages
+            makePrepareImagesState imageSizeGetter
 
-        state2 =
-            { state
-                | state =
-                    makePrepareImagesDialogState wrappers imageSizeGetter
-            }
+        ( mdl, prepareImagesState ) =
+            Sequence.setState wrappers PrepareImages state model
     in
-    ( wrappers.setLocalStorageStates
-        (LocalStorageStates { localStorageStates | prepareImages = state2 })
-        model
-    , Sequence.send state2 (DbListKeys pair)
+    ( mdl
+    , Sequence.send wrappers prepareImagesState (DbListKeys pair)
     )
 
 
-prepareImagesStateProcess : DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
-prepareImagesStateProcess response storageState =
+prepareImagesStateProcess : Wrappers model msg -> DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
+prepareImagesStateProcess wrappers response storageState =
     case storageState of
-        PrepareImagesDialogState state ->
+        PrepareImagesState state ->
             let
                 doneTuple =
                     ( state, DbNothing )
@@ -918,7 +832,7 @@ prepareImagesStateProcess response storageState =
                                         ( state
                                         , DbCustomRequest <|
                                             Task.perform
-                                                state.wrappers.sequenceDone
+                                                wrappers.sequenceDone
                                                 (Task.succeed <|
                                                     state.imageSizeGetter
                                                         subkey
@@ -979,86 +893,92 @@ prepareImagesStateProcess response storageState =
                             -- Not DbKeys or DbGot. Ignore it.
                             doneTuple
             in
-            ( request, PrepareImagesDialogState state2 )
+            ( request, PrepareImagesState state2 )
 
         _ ->
-            -- Not PrepareImagesDialogState, ignore it
+            -- Not PrepareImagesState, ignore it
             ( DbNothing, storageState )
 
 
-getPrepareImagesData : LocalStorageStates model msg -> ( Dict String Image, Dict String (List String) )
-getPrepareImagesData (LocalStorageStates states) =
-    case states.prepareImages.state of
-        PrepareImagesDialogState state ->
-            ( state.thumbnails, state.imageMemes )
-
-        _ ->
-            ( Dict.empty, Dict.empty )
-
-
-removePrepareImagesImage : LocalStorageStates model msg -> String -> LocalStorageStates model msg
-removePrepareImagesImage (LocalStorageStates states) hash =
+getPrepareImagesData : Wrappers model msg -> model -> ( Dict String Image, Dict String (List String) )
+getPrepareImagesData wrappers model =
     let
-        prepareImages =
-            states.prepareImages
+        empty =
+            ( Dict.empty, Dict.empty )
     in
-    case prepareImages.state of
-        PrepareImagesDialogState state ->
-            let
-                state2 =
-                    { state
-                        | thumbnails = Dict.remove hash state.thumbnails
-                        , imageMemes = Dict.remove hash state.imageMemes
-                    }
-            in
-            LocalStorageStates
-                { states
-                    | prepareImages =
-                        { prepareImages
-                            | state = PrepareImagesDialogState state2
-                        }
-                }
+    case Sequence.getState wrappers PrepareImages model of
+        Nothing ->
+            empty
 
-        _ ->
-            LocalStorageStates states
+        Just prepareImagesState ->
+            case prepareImagesState of
+                PrepareImagesState state ->
+                    ( state.thumbnails, state.imageMemes )
+
+                _ ->
+                    ( Dict.empty, Dict.empty )
+
+
+removePrepareImagesImage : Wrappers model msg -> String -> model -> model
+removePrepareImagesImage wrappers hash model =
+    case Sequence.getState wrappers PrepareImages model of
+        Nothing ->
+            model
+
+        Just prepareImagesState ->
+            case prepareImagesState of
+                PrepareImagesState state ->
+                    let
+                        state2 =
+                            PrepareImagesState
+                                { state
+                                    | thumbnails = Dict.remove hash state.thumbnails
+                                    , imageMemes = Dict.remove hash state.imageMemes
+                                }
+                    in
+                    Sequence.setStateOnly wrappers
+                        PrepareImages
+                        state2
+                        model
+
+                _ ->
+                    model
 
 
 injectThumbnail : Wrappers model msg -> String -> String -> model -> ( model, Cmd msg )
 injectThumbnail wrappers url hash model =
-    let
-        (LocalStorageStates localStorageStates) =
-            wrappers.localStorageStates model
+    case Sequence.getFullState wrappers PrepareImages model of
+        Nothing ->
+            model |> withNoCmd
 
-        state =
-            localStorageStates.prepareImages
+        Just state ->
+            let
+                key =
+                    KeyPair pK.thumbnails hash
 
-        key =
-            KeyPair pK.thumbnails hash
-
-        urlValue =
-            JE.string url
-    in
-    model
-        |> withCmds
-            [ Sequence.inject wrappers.injector state (DbGot key <| Just urlValue)
-            , Sequence.send state <| DbPut key urlValue
-            ]
-
-
-initialLoadDataState : Wrappers model msg -> StorageState model msg
-initialLoadDataState wrappers =
-    makeLoadDataState wrappers (\_ _ model -> ( model, Cmd.none )) []
+                urlValue =
+                    JE.string url
+            in
+            model
+                |> withCmds
+                    [ Sequence.inject wrappers state (DbGot key <| Just urlValue)
+                    , Sequence.send wrappers state <| DbPut key urlValue
+                    ]
 
 
-makeLoadDataState : Wrappers model msg -> (List ( String, String ) -> List ( String, Meme ) -> model -> ( model, Cmd msg )) -> List KeyPair -> StorageState model msg
-makeLoadDataState wrappers receiver hashes =
+initialLoadDataState : StorageState model msg
+initialLoadDataState =
+    makeLoadDataState (\_ _ model -> ( model, Cmd.none )) []
+
+
+makeLoadDataState : (List ( String, String ) -> List ( String, Meme ) -> model -> ( model, Cmd msg )) -> List KeyPair -> StorageState model msg
+makeLoadDataState receiver hashes =
     LoadDataState
         { hashes = hashes
         , names = []
         , images = []
         , memes = []
         , receiver = receiver
-        , wrappers = wrappers
         }
 
 
@@ -1080,12 +1000,6 @@ startLoadDataForImages maybeImages wrappers receiver model =
             , subkey = "."
             }
 
-        (LocalStorageStates localStorageStates) =
-            wrappers.localStorageStates model
-
-        state =
-            localStorageStates.loadData
-
         hashes =
             case maybeImages of
                 Just list ->
@@ -1094,33 +1008,28 @@ startLoadDataForImages maybeImages wrappers receiver model =
                 Nothing ->
                     []
 
-        state2 =
-            { state
-                | state =
-                    makeLoadDataState wrappers receiver (cdr hashes)
-            }
+        state =
+            makeLoadDataState receiver (cdr hashes)
+
+        ( mdl, loadDataState ) =
+            Sequence.setState wrappers LoadData state model
     in
-    wrappers.setLocalStorageStates
-        (LocalStorageStates { localStorageStates | loadData = state2 })
-        model
-        |> withCmd
-            (if maybeImages == Nothing then
-                Sequence.send state2 <|
-                    DbListKeys listImageurlsPair
+    ( mdl
+    , if maybeImages == Nothing then
+        Sequence.send wrappers loadDataState (DbListKeys listImageurlsPair)
 
-             else
-                case hashes of
-                    [] ->
-                        Cmd.none
+      else
+        case hashes of
+            [] ->
+                Cmd.none
 
-                    key :: _ ->
-                        Sequence.send state2 <|
-                            DbGet key
-            )
+            key :: _ ->
+                Sequence.send wrappers loadDataState (DbGet key)
+    )
 
 
-loadDataStateProcess : DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
-loadDataStateProcess response storageState =
+loadDataStateProcess : Wrappers model msg -> DbResponse -> StorageState model msg -> ( DbRequest msg, StorageState model msg )
+loadDataStateProcess wrappers response storageState =
     case storageState of
         LoadDataState state ->
             let
@@ -1246,11 +1155,9 @@ loadDataStateProcess response storageState =
             in
             if done then
                 ( DbCustomRequest <|
-                    Task.perform state.wrappers.sequenceDone
+                    Task.perform wrappers.sequenceDone
                         (Task.succeed <|
-                            loadDataDone
-                                state2.wrappers
-                                state2.receiver
+                            loadDataDone wrappers state2.receiver
                         )
                 , LoadDataState state2
                 )
@@ -1265,33 +1172,26 @@ loadDataStateProcess response storageState =
 
 loadDataDone : Wrappers model msg -> (List ( String, String ) -> List ( String, Meme ) -> model -> ( model, Cmd msg )) -> model -> ( model, Cmd msg )
 loadDataDone wrappers receiver model =
-    let
-        (LocalStorageStates states) =
-            wrappers.localStorageStates model
+    case Sequence.getState wrappers LoadData model of
+        Nothing ->
+            ( model, Cmd.none )
 
-        state =
-            states.loadData
-    in
-    case state.state of
-        LoadDataState loadDataState ->
-            let
-                ( mdl, cmd ) =
-                    receiver loadDataState.images
-                        loadDataState.memes
-                        model
+        Just state ->
+            case state of
+                LoadDataState loadDataState ->
+                    let
+                        ( mdl, cmd ) =
+                            receiver loadDataState.images
+                                loadDataState.memes
+                                model
 
-                state2 =
-                    { state
-                        | state =
-                            initialLoadDataState wrappers
-                    }
-            in
-            ( wrappers.setLocalStorageStates
-                (LocalStorageStates { states | loadData = state2 })
-                mdl
-            , cmd
-            )
+                        mdl2 =
+                            Sequence.setStateOnly wrappers
+                                LoadData
+                                initialLoadDataState
+                                mdl
+                    in
+                    mdl2 |> withCmd cmd
 
-        _ ->
-            -- Not LoadDataState, ignore
-            model |> withNoCmd
+                _ ->
+                    model |> withNoCmd

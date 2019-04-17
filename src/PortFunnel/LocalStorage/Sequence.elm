@@ -14,16 +14,25 @@ module PortFunnel.LocalStorage.Sequence exposing
     ( DbRequest(..)
     , DbResponse(..)
     , KeyPair
+    , LocalStorageStates
     , State
+    , Wrappers
     , dbResponseToValue
     , decodeExpectedDbGot
     , decodePair
     , encodePair
+    , getFullState
+    , getState
     , inject
     , injectTask
-    , multiProcess
+    , makeLocalStorageStates
+    , makeNullState
     , process
+    , processStates
     , send
+    , setState
+    , setStateOnly
+    , update
     )
 
 {-| Make it easier to create complex state machines from `LocalStorage` contents.
@@ -63,31 +72,38 @@ type DbResponse
     | DbKeys KeyPair (List KeyPair)
 
 
-type alias State state msg =
+type alias State key state model msg =
     { state : state
     , label : String
-    , process : DbResponse -> state -> ( DbRequest msg, state )
-    , sender : LocalStorage.Message -> Cmd msg
+    , process : Wrappers key state model msg -> DbResponse -> state -> ( DbRequest msg, state )
     }
 
 
-multiProcess : LocalStorage.Response -> List ( State state msg, setter ) -> Maybe ( State state msg, setter, Cmd msg )
-multiProcess response states =
-    let
-        pairs =
-            List.map (\( state, setter ) -> ( process response state, setter )) states
-                |> List.filter (\( pair, _ ) -> pair /= Nothing)
-    in
-    case pairs of
-        [ ( Just ( state, cmd ), setter ) ] ->
-            Just ( state, setter, cmd )
-
-        _ ->
-            Nothing
+type NullState key state model msg
+    = NullState (State key state model msg)
 
 
-process : LocalStorage.Response -> State state msg -> Maybe ( State state msg, Cmd msg )
-process response state =
+dummyProcess : Wrappers key state model msg -> DbResponse -> state -> ( DbRequest msg, state )
+dummyProcess wrappers response state =
+    ( DbNothing, state )
+
+
+isNullState : State key state model msg -> Bool
+isNullState state =
+    dummyProcess == state.process
+
+
+makeNullState : state -> NullState key state model msg
+makeNullState state =
+    NullState
+        { state = state
+        , label = ""
+        , process = \_ _ st -> ( DbNothing, st )
+        }
+
+
+process : Wrappers key state model msg -> LocalStorage.Response -> State key state model msg -> Maybe ( State key state model msg, Cmd msg )
+process wrappers response state =
     let
         ( label, responseThunk ) =
             responseToDbResponse response
@@ -101,7 +117,7 @@ process response state =
                 Debug.log "process" <| responseThunk ()
 
             ( request, state2 ) =
-                state.process dbResponse state.state
+                state.process wrappers dbResponse state.state
         in
         Just
             ( if state2 == state.state then
@@ -114,11 +130,11 @@ process response state =
                     cmd
 
                 DbBatch requests ->
-                    List.map (send state) (flattenBatchList requests)
+                    List.map (send wrappers state) (flattenBatchList requests)
                         |> Cmd.batch
 
                 _ ->
-                    send state request
+                    send wrappers state request
             )
 
 
@@ -145,14 +161,18 @@ flattenBatchList requests =
     loop requests []
 
 
-send : State state msg -> DbRequest msg -> Cmd msg
-send state request =
-    case requestToMessage state.label request of
-        Just req ->
-            state.sender <| Debug.log "send" req
+send : Wrappers key state model msg -> State key state model msg -> DbRequest msg -> Cmd msg
+send wrappers state request =
+    if isNullState state then
+        Cmd.none
 
-        Nothing ->
-            Cmd.none
+    else
+        case requestToMessage state.label request of
+            Just req ->
+                wrappers.sender <| Debug.log "send" req
+
+            Nothing ->
+                Cmd.none
 
 
 decodeExpectedDbGot : Decoder value -> String -> DbResponse -> Maybe ( KeyPair, Maybe value )
@@ -320,16 +340,10 @@ It returns a `Task` that, if you send it with your LocalStorage `sub` port messa
 It's a trivial task wrapper on the result of dbResponseToValue, using `label` property of the `State`.
 
 -}
-injectTask : Injector msg -> State state msg -> DbResponse -> Task Never Value
-injectTask injector state response =
-    dbResponseToValue injector.prefix state.label response
+injectTask : Wrappers key state model msg -> State key state model msg -> DbResponse -> Task Never Value
+injectTask wrappers state response =
+    dbResponseToValue wrappers.injector.prefix state.label response
         |> Task.succeed
-
-
-type alias Injector msg =
-    { prefix : String
-    , tagger : Value -> msg
-    }
 
 
 {-| Call `injectTask`, and use `Task.perform` to turn that `Task` into a `Cmd`.
@@ -337,10 +351,10 @@ type alias Injector msg =
 The `(Value -> msg)` function will usually be the `Msg` that receives subscription input from your LocalStorage port.
 
 -}
-inject : Injector msg -> State state msg -> DbResponse -> Cmd msg
-inject injector state response =
-    injectTask injector state response
-        |> Task.perform injector.tagger
+inject : Wrappers key state model msg -> State key state model msg -> DbResponse -> Cmd msg
+inject wrappers state response =
+    injectTask wrappers state response
+        |> Task.perform wrappers.injector.tagger
 
 
 
@@ -349,30 +363,35 @@ inject injector state response =
 ---
 
 
+type alias Injector msg =
+    { prefix : String
+    , tagger : Value -> msg
+    }
+
+
 {-| Communication between `Sequence` and your main `Model` and `Msg`.
 -}
 type alias Wrappers key state model msg =
     { sender : LocalStorage.Message -> Cmd msg
-    , injector : { prefix : String, tagger : Value -> msg }
+    , injector : Injector msg
     , localStorageStates : model -> LocalStorageStates key state model msg
     , setLocalStorageStates : LocalStorageStates key state model msg -> model -> model
     , sequenceDone : (model -> ( model, Cmd msg )) -> msg
+    , nullState : NullState key state model msg
     }
 
 
 type LocalStorageStates key state model msg
     = LocalStorageStates
-        { label : String
-        , wrappers : Wrappers key state model msg
-        , table : Dict key (State state msg)
+        { wrappers : Wrappers key state model msg
+        , table : Dict key (State key state model msg)
         }
 
 
-makeLocalStorageStates : String -> Wrappers key state model msg -> List ( key, State state msg ) -> LocalStorageStates key state model msg
-makeLocalStorageStates label wrappers states =
+makeLocalStorageStates : Wrappers key state model msg -> List ( key, State key state model msg ) -> LocalStorageStates key state model msg
+makeLocalStorageStates wrappers states =
     LocalStorageStates
-        { label = label
-        , wrappers = wrappers
+        { wrappers = wrappers
         , table = AssocList.fromList states
         }
 
@@ -382,39 +401,73 @@ getWrappers (LocalStorageStates states) =
     states.wrappers
 
 
-getStates : LocalStorageStates key state model msg -> List ( key, State state msg )
-getStates (LocalStorageStates states) =
-    AssocList.toList states.table
-
-
-setStates : List ( key, State state msg ) -> LocalStorageStates key state model msg -> LocalStorageStates key state model msg
-setStates stateList (LocalStorageStates states) =
-    LocalStorageStates
-        { states | table = AssocList.fromList stateList }
-
-
-getState : key -> LocalStorageStates key state model msg -> Maybe (State state msg)
-getState key (LocalStorageStates states) =
+getFullState : Wrappers key state model msg -> key -> model -> Maybe (State key state model msg)
+getFullState wrappers key model =
+    let
+        (LocalStorageStates states) =
+            wrappers.localStorageStates model
+    in
     AssocList.get key states.table
 
 
-putState : key -> State state msg -> LocalStorageStates key state model msg -> LocalStorageStates key state model msg
-putState key state (LocalStorageStates states) =
-    LocalStorageStates
-        { states | table = AssocList.insert key state states.table }
+getState : Wrappers key state model msg -> key -> model -> Maybe state
+getState wrappers key model =
+    case getFullState wrappers key model of
+        Nothing ->
+            Nothing
+
+        Just state ->
+            Just state.state
 
 
-removeState : key -> LocalStorageStates key state model msg -> LocalStorageStates key state model msg
-removeState key (LocalStorageStates states) =
-    LocalStorageStates
-        { states | table = AssocList.remove key states.table }
+nullState : Wrappers key state model msg -> State key state model msg
+nullState wrappers =
+    let
+        (NullState state) =
+            wrappers.nullState
+    in
+    state
+
+
+setStateOnly : Wrappers key state model msg -> key -> state -> model -> model
+setStateOnly wrappers key stateState model =
+    let
+        ( res, _ ) =
+            setState wrappers key stateState model
+    in
+    res
+
+
+setState : Wrappers key state model msg -> key -> state -> model -> ( model, State key state model msg )
+setState wrappers key stateState model =
+    let
+        (LocalStorageStates states) =
+            wrappers.localStorageStates model
+    in
+    case AssocList.get key states.table of
+        Nothing ->
+            ( model, nullState wrappers )
+
+        Just state ->
+            ( wrappers.setLocalStorageStates
+                (LocalStorageStates
+                    { states
+                        | table =
+                            AssocList.insert key
+                                { state | state = stateState }
+                                states.table
+                    }
+                )
+                model
+            , state
+            )
 
 
 processStates : LocalStorage.Response -> LocalStorageStates key state model msg -> ( LocalStorageStates key state model msg, Cmd msg )
 processStates response (LocalStorageStates states) =
     let
         loop key state ( states3, cmd2 ) =
-            case process response state of
+            case process states.wrappers response state of
                 Nothing ->
                     ( states3, cmd2 )
 
@@ -430,3 +483,14 @@ processStates response (LocalStorageStates states) =
             AssocList.foldl loop ( states, Cmd.none ) states.table
     in
     ( LocalStorageStates states2, cmd )
+
+
+update : Wrappers key state model msg -> model -> LocalStorage.Response -> ( model, Cmd msg )
+update wrappers model response =
+    let
+        ( states2, cmd ) =
+            processStates response (wrappers.localStorageStates model)
+    in
+    ( wrappers.setLocalStorageStates states2 model
+    , cmd
+    )

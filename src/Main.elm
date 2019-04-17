@@ -1024,22 +1024,25 @@ updateInternal msg model =
         DeleteSavedImage hash ->
             let
                 ( _, memesDict ) =
-                    Sequencer.getPrepareImagesData model.localStorageStates
+                    Sequencer.getPrepareImagesData sequencerWrappers <|
+                        WrappedModel model
 
                 memes =
                     Dict.get hash memesDict
                         |> Maybe.withDefault []
+
+                (WrappedModel mdl) =
+                    Sequencer.removePrepareImagesImage sequencerWrappers
+                        hash
+                        (WrappedModel model)
             in
-            { model
+            { mdl
                 | meme =
                     if hash == model.meme.image.hash then
                         initialMeme
 
                     else
                         model.meme
-                , localStorageStates =
-                    Sequencer.removePrepareImagesImage model.localStorageStates
-                        hash
             }
                 |> withCmds
                     (List.concat
@@ -3146,7 +3149,8 @@ imagesDialog : Model -> Config Msg
 imagesDialog model =
     let
         ( thumbnails, imageMemesDict ) =
-            Sequencer.getPrepareImagesData model.localStorageStates
+            Sequencer.getPrepareImagesData sequencerWrappers <|
+                WrappedModel model
 
         imageMemes : Dict String (List String)
         imageMemes =
@@ -3564,6 +3568,7 @@ sequencerWrappers =
         \states (WrappedModel model) ->
             WrappedModel { model | localStorageStates = states }
     , sequenceDone = SequenceDone
+    , nullState = Sequence.makeNullState Sequencer.nullState
     }
 
 
