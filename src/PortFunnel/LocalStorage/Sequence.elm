@@ -137,17 +137,13 @@ process wrappers response state =
     else
         let
             dbResponse =
-                Debug.log "process" <| responseThunk ()
+                responseThunk ()
 
             ( request, state2 ) =
                 state.process wrappers dbResponse state.state
         in
         Just
-            ( if state2 == state.state then
-                state
-
-              else
-                { state | state = state2 }
+            ( { state | state = state2 }
             , case request of
                 DbCustomRequest cmd ->
                     cmd
@@ -192,7 +188,7 @@ send wrappers state request =
     else
         case requestToMessage state.label request of
             Just req ->
-                wrappers.sender <| Debug.log "send" req
+                wrappers.sender req
 
             Nothing ->
                 Cmd.none

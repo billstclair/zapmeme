@@ -1718,35 +1718,32 @@ updateCaption updater model =
 funnelDict : FunnelDict Model Msg
 funnelDict =
     PortFunnels.makeFunnelDict
-        [ LocalStorageHandler sequencerStorageHandler ]
+        [ LocalStorageHandler wrappedStorageHandler ]
         getCmdPort
 
 
-wrappedStorageHandler : LocalStorage.Response -> PortFunnels.State -> WrappedModel -> ( WrappedModel, Cmd Msg )
-wrappedStorageHandler =
-    Sequencer.storageHandler sequencerWrappers
-
-
-sequencerStorageHandler : LocalStorage.Response -> PortFunnels.State -> Model -> ( Model, Cmd Msg )
-sequencerStorageHandler response state model =
+wrappedStorageHandler : LocalStorage.Response -> PortFunnels.State -> Model -> ( Model, Cmd Msg )
+wrappedStorageHandler response _ model =
     let
         ( WrappedModel mdl, cmd ) =
-            wrappedStorageHandler response state (WrappedModel model)
+            Sequence.update sequencerWrappers
+                (WrappedModel model)
+                response
     in
     ( mdl, cmd )
 
 
+{-| The `model` parameter is necessary here for `PortFunnels.makeFunnelDict`.
+-}
 getCmdPort : String -> model -> (Value -> Cmd Msg)
 getCmdPort moduleName _ =
     PortFunnels.getCmdPort ProcessLocalStorage moduleName False
 
 
-{-| The `model` parameter is necessary here to make PortFunnel happy.
--}
-localStorageSend : LocalStorage.Message -> model -> Cmd Msg
-localStorageSend message model =
-    LocalStorage.send (getCmdPort LocalStorage.moduleName model)
-        message
+localStorageSend : LocalStorage.Message -> Cmd Msg
+localStorageSend message =
+    LocalStorage.send (getCmdPort LocalStorage.moduleName ())
+        (Debug.log "send" message)
         funnelState.storage
 
 
@@ -3451,7 +3448,7 @@ savedModelToModel savedModel model =
 
 clear : String -> Cmd Msg
 clear prefix =
-    localStorageSend (LocalStorage.clear <| Debug.log "clear" prefix) ()
+    localStorageSend (LocalStorage.clear <| Debug.log "clear" prefix)
 
 
 put : String -> Maybe Value -> Cmd Msg
@@ -3460,7 +3457,7 @@ put key value =
         k =
             Debug.log "put" key
     in
-    localStorageSend (LocalStorage.put key value) ()
+    localStorageSend (LocalStorage.put key value)
 
 
 justTrueValue : Maybe Value
@@ -3560,7 +3557,7 @@ putSavedMeme name meme =
 
 sequencerWrappers : Sequencer.Wrappers WrappedModel Msg
 sequencerWrappers =
-    { sender = \message -> localStorageSend message ()
+    { sender = localStorageSend
     , injector = { prefix = localStoragePrefix, tagger = ProcessLocalStorage }
     , localStorageStates =
         \(WrappedModel model) -> model.localStorageStates

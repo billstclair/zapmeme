@@ -217,10 +217,12 @@ done functions.
 
 Mostly data driven, as an old lisper likes it.
 
+This function isn't actually used by Main.elm; it calls Sequence.update directly.
+
 -}
-storageHandler : Wrappers model msg -> LocalStorage.Response -> PortFunnels.State -> model -> ( model, Cmd msg )
-storageHandler wrappers response _ model =
-    Sequence.update wrappers model response
+storageHandler : Wrappers model msg -> model -> LocalStorage.Response -> ( model, Cmd msg )
+storageHandler =
+    Sequence.update
 
 
 initialSaveImageState : StorageState model msg
