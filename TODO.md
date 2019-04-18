@@ -9,7 +9,7 @@ This file tracks bugs and ideas for new features.
   2. A caption can either be text, as it is now, or another meme. SVG makes it really easy to just call the rendering code recursively, offset and resized (and rotated or mirrored).
   3. A meme can easily include itself. The rendering code just needs recursive depth and size limits, so that it stops.
   4. And, of course, meme captions need to have an opacity, so might as well let that apply to the textual ones as well.
-  5. Need warnings when overwriting a saved meme that it's used by others.
+  5. Need warnings when overwriting a saved meme that it's used by others.<br/>
   ∞. YOW!
 * Word-wrap outline font SVG.
 * More built-in fonts.
