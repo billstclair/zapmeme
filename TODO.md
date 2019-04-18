@@ -19,19 +19,19 @@ This file tracks bugs and ideas for new features.
 ## Nice Features
 
 * Persistence on S3.
-  This opens up the idea of general web-hosted memes and images.
-  zapmeme.com needs to provide a proxy service, since JavaScript is
-  allowed to download only from the server hosting the JS or
-  servers that implement CORS.
-  In order to keep it from being abused, it will require an OAuth login,
-  to Google, Facebook, GitHub, or Gab (Twitter doesn't do proper OAuth).
-  Any login will get you some limited bandwidth per time period.
-  A paid account (e.g. $1/month, $10/year) will open that up considerably.
-  Fetches are accompanied by file length and hash, and are stopped by the
-  server if longer or no hash match or JSON doesn't parse.
-  This implies a "Make Link" function, which paid & S3 accounts will have,
-  and which downloads a link, checks the JSON, and creates a proxy link
-  with length & hash included.
+  * This opens up the idea of general web-hosted memes and images.
+  1.  zapmeme.com needs to provide a proxy service, since JavaScript is
+      allowed to download only from the server hosting the JS or
+      servers that implement CORS.
+  2.  In order to keep it from being abused, it will require an OAuth login,
+      to Google, Facebook, GitHub, or Gab (Twitter doesn't do proper OAuth).
+      Any login will get you some limited bandwidth per time period.
+      A paid account (e.g. $1/month, $10/year) will open that up considerably.
+  3. Fetches are accompanied by file length and hash, and are stopped by the
+     server if longer or no hash match or JSON doesn't parse.
+     This implies a "Make Link" function, which paid & S3 accounts will have,
+     and which downloads a link, checks the JSON, and creates a proxy link
+     with length & hash included.
 * Save on return in Memes dialog.
 * Default saved meme name to text of first caption, <br> -> " "
   Unless it was saved under another name (not sure how to encode this).
