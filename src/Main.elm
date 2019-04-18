@@ -2724,15 +2724,24 @@ fontParagraph model =
             , model.fontDict
                 |> Dict.toList
                 |> List.map Tuple.second
-                |> List.map fontExample
+                |> List.map (fontExample model.inputs.bold)
             ]
 
 
-fontExample : Font -> Html Msg
-fontExample font =
+fontExample : Bool -> Font -> Html Msg
+fontExample isBold font =
+    let
+        weight =
+            if isBold then
+                "bold"
+
+            else
+                "normal"
+    in
     span []
         [ span
             [ fontAttribute font
+            , style "font-weight" weight
             , onClick <| SetFont font.font
             ]
             [ text font.font ]
