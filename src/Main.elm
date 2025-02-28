@@ -2,7 +2,7 @@
 --
 -- Main.elm
 -- Zap Meme top-level
--- Copyright (c) 2019 Bill St. Clair <billstclair@gmail.com>
+-- Copyright (c) 2019-2025 Bill St. Clair <billstclair@gmail.com>
 -- Some rights reserved.
 -- Distributed under the MIT License
 -- See LICENSE.txt
@@ -2014,7 +2014,7 @@ view model =
             , fontParagraph model
             , p []
                 [ h2 [ style "margin-bottom" "0" ] [ text "ZAP Meme" ]
-                , text <| chars.copyright ++ " 2019 Bill St. Clair"
+                , text <| chars.copyright ++ " 2019-2025 Bill St. Clair"
                 , br
                 , a
                     [ href "https://github.com/billstclair/zapmeme"
