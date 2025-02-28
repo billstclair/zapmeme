@@ -27,7 +27,7 @@ import File exposing (File)
 import File.Download as Download
 import File.Select as Select
 import FormatNumber exposing (format)
-import FormatNumber.Locales exposing (Locale, usLocale)
+import FormatNumber.Locales exposing (Decimals(..), Locale, usLocale)
 import Html
     exposing
         ( Attribute
@@ -97,13 +97,11 @@ import Svg.Attributes
     exposing
         ( fill
         , fontSize
-        , height
         , stroke
         , strokeDasharray
         , strokeWidth
         , textAnchor
         , transform
-        , width
         , x
         , x1
         , x2
@@ -365,8 +363,8 @@ type alias Model =
     , triggerIsFontAvailable : Int
     , fontCheckDelay : Int
     , mimeType : String
-    , incrementButton : Button ()
-    , decrementButton : Button ()
+    , incrementButton : Button () Msg
+    , decrementButton : Button () Msg
     , subscription : Maybe Subscription
     , fontDict : Dict String Font
     , key : Key
@@ -1930,8 +1928,8 @@ view model =
                         Just url ->
                             img
                                 [ src url
-                                , width <| tos scalememe.width ++ "px"
-                                , height <| tos scalememe.height ++ "px"
+                                , style "width" <| tos scalememe.width ++ "px"
+                                , style "height" <| tos scalememe.height ++ "px"
                                 , alt "Meme image"
                                 , onClick <| ShowMemeImage False ""
                                 ]
@@ -2001,8 +1999,8 @@ view model =
                     p [ style "display" "none" ]
                         [ svg
                             [ Svg.Attributes.id thumbnailSvgId
-                            , width <| tos w
-                            , height <| tos h
+                            , Svg.Attributes.width <| tos w
+                            , Svg.Attributes.height <| tos h
                             ]
                             [ Svg.Lazy.lazy3 renderThumbnailImage w h url ]
                         ]
@@ -2168,8 +2166,8 @@ renderInputs scale scalememe model =
                 , td []
                     [ svg
                         [ style "margin" "auto"
-                        , height <| ftos (2 * buttonSize - 2)
-                        , width <| ftos buttonSize
+                        , Svg.Attributes.height <| ftos (2 * buttonSize - 2)
+                        , Svg.Attributes.width <| ftos buttonSize
                         ]
                         [ SB.render ( 0, 0 )
                             (SB.TextContent "^")
@@ -2784,8 +2782,8 @@ renderMeme scale model =
     in
     svg
         [ Svg.Attributes.id svgId
-        , width w
-        , height h
+        , Svg.Attributes.width w
+        , Svg.Attributes.height h
         ]
     <|
         List.concat
@@ -2812,8 +2810,8 @@ renderSvgImage : Int -> Int -> String -> Svg Msg
 renderSvgImage wi hi url =
     Svg.image
         [ Svg.Attributes.id imageId
-        , width <| tos wi
-        , height <| tos hi
+        , Svg.Attributes.width <| tos wi
+        , Svg.Attributes.height <| tos hi
         , xlinkHref url
         , Svg.Events.onClick <| SelectCaption Nothing
         ]
@@ -2824,8 +2822,8 @@ renderThumbnailImage : Int -> Int -> String -> Svg Msg
 renderThumbnailImage w h url =
     Svg.image
         [ Svg.Attributes.id thumbnailImageId
-        , width <| tos w
-        , height <| tos h
+        , Svg.Attributes.width <| tos w
+        , Svg.Attributes.height <| tos h
         , xlinkHref url
         ]
         []
@@ -2900,8 +2898,8 @@ renderCaption wi hi selectedPosition showCaptionBorders fontDict caption =
                 foreignObject
                     [ x (tos cx)
                     , y (tos cy)
-                    , width (tos cw)
-                    , height (tos ch)
+                    , width cw
+                    , height ch
                     ]
                     [ div
                         [ textalign alignment
@@ -2961,8 +2959,8 @@ renderCaption wi hi selectedPosition showCaptionBorders fontDict caption =
         , rect
             [ x (tos cx)
             , y (tos cy)
-            , width (tos cw)
-            , height (tos ch)
+            , Svg.Attributes.width (tos cw)
+            , Svg.Attributes.height (tos ch)
             , strokeDasharray dashArray
             , Svg.Attributes.style rectStyle
             , Svg.Events.onClick <| SelectCaption (Just caption.position)
@@ -3026,7 +3024,7 @@ dataTextAreaId =
 
 fontSizeLocale : Locale
 fontSizeLocale =
-    { usLocale | decimals = 1 }
+    { usLocale | decimals = Exact 1 }
 
 
 fontFormat : Float -> String
@@ -3260,7 +3258,7 @@ savedImageRow model imageMemes image =
                 [ img
                     [ src image.url
                     , alt image.hash
-                    , height <| tos thumbnailScaledHeight
+                    , height thumbnailScaledHeight
                     ]
                     []
                 ]
